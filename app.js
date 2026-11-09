@@ -81,7 +81,7 @@
         <section class="form">
           <h2>Anmelden</h2>
           <form id="f" novalidate>
-            <label class="feld"><span class="label">Kundenkennung</span><input type="text" name="kennung" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+            <label class="feld"><span class="label">Kundenkennung (Team: E-Mail-Adresse)</span><input type="text" name="kennung" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
             <label class="feld"><span class="label">Passwort</span><input type="password" name="passwort" autocomplete="current-password" required></label>
             <button class="btn" type="submit">Anmelden</button>
             <div id="m">${hinweis ? `<div class="meldung ok" role="status">${esc(hinweis)}</div>` : ""}</div>
