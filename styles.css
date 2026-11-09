@@ -1,0 +1,146 @@
+/* Kundenportal PPotthoff – Design System PPotthoff: eckig, Haarlinien, keine Schatten, Messing höchstens zweimal je Ansicht */
+@font-face{font-family:'Newsreader';src:url(fonts/newsreader-latin-300-normal.woff2) format('woff2');font-weight:300;font-display:swap}
+@font-face{font-family:'Newsreader';src:url(fonts/newsreader-latin-400-normal.woff2) format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Newsreader';src:url(fonts/newsreader-latin-300-italic.woff2) format('woff2');font-weight:300;font-style:italic;font-display:swap}
+@font-face{font-family:'Schibsted Grotesk';src:url(fonts/schibsted-grotesk-latin-400-normal.woff2) format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Schibsted Grotesk';src:url(fonts/schibsted-grotesk-latin-600-normal.woff2) format('woff2');font-weight:600;font-display:swap}
+:root{
+  --surface:#f5f0e6;--surface-2:#ede6d6;--paper:#fff;--ink:#211f1a;--ink-soft:#5a564c;
+  --green:#22372d;--green-2:#2c4538;--green-soft:#9fb2a6;--brass:#b0894c;--rule:#ddd5c4;--line:#211f1a24;--critical:#9a3b22;
+  --serif:'Newsreader',Georgia,serif;--sans:'Schibsted Grotesk',Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--surface);color:var(--ink);font:400 16px/1.6 var(--sans);min-height:100vh;display:flex;flex-direction:column}
+a{color:var(--ink)}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.kopf :focus-visible,.hero :focus-visible{outline-color:var(--surface)}
+.label{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-soft)}
+h1{font:300 clamp(32px,4.4vw,48px)/1.08 var(--serif);letter-spacing:-.8px}
+h2{font:400 clamp(24px,2.6vw,30px)/1.15 var(--serif);margin-bottom:16px}
+h3{font:400 20px/1.35 var(--serif)}
+.nr{font:italic 300 18px var(--serif);color:var(--brass);margin-right:12px}
+.leise{color:var(--ink-soft)}
+.klein{font-size:14px}
+.wrap{width:100%;max-width:1120px;margin:0 auto;padding:0 24px}
+
+/* Kopf */
+.kopf{background:var(--green);color:var(--surface)}
+.kopf .wrap{display:flex;align-items:center;justify-content:space-between;height:72px;gap:16px}
+.kopf img{height:28px;width:auto;display:block}
+.kopf .rechts{display:flex;align-items:center;gap:20px;font-size:14px;color:var(--green-soft)}
+.kopf .rechts b{color:var(--surface);font-weight:400}
+.kopf button.text{color:var(--surface)}
+.reiter{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.reiter .wrap{display:flex;gap:28px;overflow-x:auto;scrollbar-width:none}
+.reiter a{display:block;padding:16px 0 13px;font-size:15px;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap}
+.reiter a[aria-current=page]{border-bottom-color:var(--ink)}
+.reiter a .zahl{display:inline-block;min-width:20px;padding:0 6px;margin-left:6px;background:var(--green);color:var(--surface);font-size:12px;font-weight:600;text-align:center}
+
+main{flex:1;padding:48px 0 84px}
+.fuss{border-top:1px solid var(--line);padding:24px 0;font-size:13px;color:var(--ink-soft)}
+.fuss .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+/* Buttons */
+button,.btn{font:600 14px var(--sans);cursor:pointer;border:0;border-radius:0}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;background:var(--green);color:var(--surface);text-decoration:none}
+.btn:hover{background:var(--green-2)}
+.btn.zwei{background:transparent;color:var(--ink);border:1px solid var(--ink);padding:11px 21px}
+.btn.zwei:hover{background:var(--surface-2)}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
+button.text{background:none;color:var(--ink);text-decoration:underline;font-weight:400;padding:0}
+
+/* Formular */
+label.feld{display:block;margin-bottom:16px}
+label.feld span{display:block;margin-bottom:6px}
+input[type=text],input[type=password],input[type=email],textarea,select{width:100%;font:400 16px var(--sans);color:var(--ink);background:var(--paper);border:1px solid var(--ink-soft);border-radius:0;padding:11px 12px}
+textarea{min-height:84px;resize:vertical}
+.meldung{border:1px solid var(--rule);background:var(--paper);padding:12px 16px;margin:16px 0;font-size:15px}
+.meldung.fehler{border-left:4px solid var(--critical)}
+.meldung.ok{border-left:4px solid var(--green)}
+
+/* Anmeldung */
+.anmeldung{display:grid;grid-template-columns:1.1fr 1fr;min-height:100vh}
+.anmeldung .hero{background:var(--green);color:var(--surface);padding:56px clamp(24px,5vw,72px);display:flex;flex-direction:column;justify-content:space-between;gap:48px}
+.anmeldung .hero img{height:34px;width:auto;align-self:flex-start}
+.anmeldung .hero h1 em{display:block;font-style:italic;color:var(--brass)}
+.anmeldung .hero p{color:var(--green-soft);max-width:420px;margin-top:20px}
+.anmeldung .form{padding:56px clamp(24px,5vw,72px);display:flex;flex-direction:column;justify-content:center;max-width:520px}
+.anmeldung .form h2{margin-bottom:24px}
+.qr{background:var(--paper);border:1px solid var(--rule);padding:16px;display:inline-block;margin:12px 0}
+.qr img{width:180px;height:180px;display:block}
+code{font-family:ui-monospace,Menlo,monospace;font-size:14px;background:var(--surface-2);padding:2px 6px;word-break:break-all}
+
+/* Übersicht */
+.kicker{margin-bottom:8px}
+.lead{font-size:19px;line-height:1.6;max-width:760px;margin-top:20px}
+.raster{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--ink);margin-top:40px}
+.raster > div{padding:20px 24px 20px 0;border-right:1px solid var(--rule);margin-right:24px}
+.raster > div:last-child{border-right:0;margin-right:0}
+.raster .wert{font:300 40px/1.1 var(--serif);margin:6px 0 4px}
+.abschnitt{margin-top:64px}
+.abschnitt-kopf{display:flex;justify-content:space-between;align-items:baseline;gap:16px;border-bottom:1px solid var(--ink);padding-bottom:12px;margin-bottom:8px}
+.abschnitt-kopf h2{margin:0}
+
+/* Listen */
+.liste{list-style:none}
+.liste > li{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:16px 0;border-bottom:1px solid var(--rule)}
+.liste > li .titel{font-weight:600}
+.liste > li .unter{font-size:14px;color:var(--ink-soft)}
+.liste .aktionen{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.marke{display:inline-block;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:2px 8px;border:1px solid var(--ink-soft);color:var(--ink-soft);margin-left:8px;vertical-align:2px}
+.marke.gruen{border-color:var(--green);color:var(--green)}
+.marke.rot{border-color:var(--critical);color:var(--critical)}
+.leer{display:flex;gap:12px;align-items:flex-start;background:var(--paper);border:1px solid var(--rule);padding:16px 20px;margin-top:16px}
+
+/* Bericht */
+.bericht-rahmen{background:var(--paper);border:1px solid var(--rule);margin-top:24px}
+.bericht-rahmen iframe{display:block;width:100%;border:0;min-height:70vh}
+.zurueck{margin-bottom:24px;display:inline-block}
+
+/* Entscheidungen */
+.karten{display:grid;gap:20px;margin-top:24px}
+.karte{background:var(--surface-2);border-left:4px solid var(--rule);padding:24px;display:grid;grid-template-columns:48px 1fr minmax(260px,320px);gap:24px}
+.karte.ja{border-left-color:var(--green)}
+.karte.nein{border-left-color:var(--critical)}
+.karte .num{font:300 34px/1 var(--serif)}
+.karte .frage{font-weight:600;font-size:18px;line-height:1.4;margin:6px 0 10px}
+.karte .empf b{font-weight:600}
+.karte .neben{font-size:14px;color:var(--ink-soft);margin-top:8px}
+.karte .antwort form{display:grid;gap:12px}
+.janein{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.janein label{display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--ink);background:var(--paper);padding:11px;cursor:pointer;font-weight:600;font-size:15px}
+.janein input{accent-color:var(--green)}
+.janein label:has(input:checked){background:var(--green);color:var(--surface);border-color:var(--green)}
+.ergebnis{font-size:15px}
+.ergebnis b{font-weight:600}
+
+/* Aufgaben */
+.zwei-spalten{display:grid;grid-template-columns:1fr 1fr;gap:48px}
+
+/* Dateien */
+.ablage{border:1px dashed var(--ink-soft);background:var(--paper);padding:24px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:16px}
+.ablage.ziehen{border-color:var(--green);background:var(--surface-2)}
+
+/* Intern */
+.leiste{display:flex;gap:16px;align-items:end;flex-wrap:wrap;margin-bottom:32px}
+.leiste label.feld{margin:0;min-width:260px}
+table.protokoll{width:100%;border-collapse:collapse;font-size:14px}
+table.protokoll th{text-align:left;font-weight:400;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--ink);padding:8px 12px 8px 0}
+table.protokoll td{border-bottom:1px solid var(--rule);padding:10px 12px 10px 0;vertical-align:top}
+
+.versteckt{display:none !important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+@media (max-width:860px){
+  .anmeldung{grid-template-columns:1fr}
+  .anmeldung .hero{min-height:auto;padding:40px 24px}
+  .raster{grid-template-columns:1fr}
+  .raster > div{border-right:0;margin-right:0;border-bottom:1px solid var(--rule)}
+  .karte{grid-template-columns:1fr;gap:12px}
+  .zwei-spalten{grid-template-columns:1fr;gap:32px}
+  .liste > li{grid-template-columns:1fr}
+  .liste .aktionen{justify-content:flex-start}
+  .kopf .rechts .kunde{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none !important}}
