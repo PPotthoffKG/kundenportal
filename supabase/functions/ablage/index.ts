@@ -33,13 +33,31 @@ Deno.serve(async (req) => {
     if (!e[f]) return antwort(400, { fehler: `Feld fehlt: ${f}` });
   }
 
+  // Art und Datum gehen in den Speicherpfad: nur feste Werte zulassen
+  if (!["wochenstand", "monatsauswertung"].includes(e.art)) return antwort(400, { fehler: "Art unbekannt" });
+  if (typeof e.zeitraum_start !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.zeitraum_start)) {
+    return antwort(400, { fehler: "zeitraum_start muss JJJJ-MM-TT sein" });
+  }
+
   const { data: kunde } = await db.from("kunden").select("id").eq("slug", e.kunde_slug).maybeSingle();
   if (!kunde) return antwort(404, { fehler: "Kunde unbekannt" });
 
-  const { data: alt } = await db.from("berichte").select("id,status")
-    .eq("kunde_id", kunde.id).eq("art", e.art).eq("zeitraum", e.zeitraum).maybeSingle();
-  if (alt?.status === "freigegeben" && !e.ueberschreiben) {
-    return antwort(409, { fehler: "Bericht ist schon freigegeben; mit ueberschreiben=true neu als Entwurf ablegen" });
+  // Ein Bericht belegt seinen Pfad über Art und Startdatum. Gibt es dort schon einen Bericht
+  // mit anderem Zeitraum-Text, wird nichts überschrieben.
+  const { data: alle, error: fa } = await db.from("berichte").select("id,status,zeitraum")
+    .eq("kunde_id", kunde.id).eq("art", e.art).or(`zeitraum.eq.${JSON.stringify(e.zeitraum)},zeitraum_start.eq.${e.zeitraum_start}`);
+  if (fa) return antwort(500, { fehler: "Bericht suchen: " + fa.message });
+  if ((alle ?? []).some((b) => b.zeitraum !== e.zeitraum)) {
+    return antwort(409, { fehler: "Zu diesem Startdatum gibt es schon einen Bericht mit anderem Zeitraum" });
+  }
+  const alt = (alle ?? [])[0];
+  if (alt?.status === "freigegeben") {
+    if (!e.ueberschreiben) {
+      return antwort(409, { fehler: "Bericht ist schon freigegeben; mit ueberschreiben=true neu als Entwurf ablegen" });
+    }
+    // Erst zurück auf Entwurf, dann die Datei tauschen: der Kunde sieht nie ungeprüften Inhalt
+    const { error: fz } = await db.from("berichte").update({ status: "entwurf", freigegeben_am: null, freigegeben_von: null }).eq("id", alt.id);
+    if (fz) return antwort(500, { fehler: "Bericht zurücknehmen: " + fz.message });
   }
 
   const basis = `${kunde.id}/${e.art}/${e.zeitraum_start}`;
