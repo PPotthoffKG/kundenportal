@@ -144,3 +144,22 @@ table.protokoll td{border-bottom:1px solid var(--rule);padding:10px 12px 10px 0;
   .kopf .rechts .kunde{display:none}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none !important}}
+
+/* Übersicht: was ist los */
+.lage{max-width:760px;margin:20px 0 0}
+.lage p{font:300 22px/1.5 var(--serif);margin-bottom:10px}
+.liste > li .label{margin-bottom:2px}
+.liste > li .titel a{text-decoration:none}
+.liste > li .titel a:hover{text-decoration:underline}
+/* Kommentare und Anliegen */
+.kom{padding:16px 0;border-bottom:1px solid var(--rule)}
+.kom .wer{font-size:13px;color:var(--ink-soft);margin-bottom:4px}
+.kom .wer b{color:var(--ink);font-weight:600}
+.kom .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.thread{border-top:0}
+.status{display:inline-block;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;border:1px solid var(--ink);padding:3px 8px;margin-top:14px}
+@media (max-width:860px){
+  .lage p{font-size:19px}
+  .reiter .wrap{gap:22px}
+  #zf > div{grid-template-columns:1fr !important;gap:0 !important}
+}
