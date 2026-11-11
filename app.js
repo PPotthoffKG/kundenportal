@@ -1,6 +1,6 @@
 /* Kundenportal PPotthoff
-   Kundensicht: Übersicht, Berichte, Entscheidungen, Aufgaben, Dateien, Werkzeuge.
-   Interner Bereich (nur Team mit Zwei-Faktor): Freigabe, Antworten, Dateien, Werkzeuge, Protokoll.
+   Kundensicht: Übersicht, Berichte, Entscheidungen, Aufgaben, Anliegen, Dateien, Roadmap, Werkzeuge; Kommentare an Berichten, Aufgaben und Anliegen.
+   Interner Bereich (nur Team mit Zwei-Faktor): Freigabe, Antworten, Anliegen, Dateien, Aufgaben, Roadmap, Werkzeuge, Zugänge, Protokoll.
    Alle Zugriffsrechte liegen in der Datenbank (Zeilenregeln); die Oberfläche zeigt nur, was die Datenbank herausgibt. */
 (() => {
   "use strict";
@@ -244,7 +244,35 @@
   }
 
   // ---------- Kundensicht ----------
-  const KUNDE_REITER = [["", "Übersicht"], ["berichte", "Berichte"], ["entscheidungen", "Entscheidungen"], ["aufgaben", "Aufgaben"], ["dateien", "Dateien"], ["werkzeuge", "Werkzeuge"]];
+  const KUNDE_REITER = [["", "Übersicht"], ["berichte", "Berichte"], ["entscheidungen", "Entscheidungen"], ["aufgaben", "Aufgaben"], ["anliegen", "Anliegen"], ["dateien", "Dateien"], ["roadmap", "Roadmap"], ["werkzeuge", "Werkzeuge"]];
+  const vorname = () => (S.mitglied?.anzeigename || "").trim().split(/\s+/)[0] || "";
+  const ANLIEGEN_STATUS = { offen: "Offen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
+  const ROADMAP_STATUS = { laeuft: "Läuft", geplant: "Geplant", erledigt: "Erledigt" };
+
+  // ---------- Kommentare (gleich für Kunde und Team) ----------
+  // Name, Rolle und Zeit setzt die Datenbank aus dem Zugang; die Oberfläche schickt nur den Text.
+  async function kommentare(art, id, kundeId) {
+    const { data } = await sb.from("kommentare").select("id,text,autor_name,autor_rolle,erstellt").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
+    const liste = (data || []).map((k) => `<div class="kom"><div class="wer"><b>${esc(k.autor_name || "")}</b> · ${zeit(k.erstellt)}</div><div class="text">${esc(k.text)}</div></div>`).join("");
+    return `<section class="abschnitt" style="margin-top:40px"><div class="abschnitt-kopf"><h2>Kommentare</h2></div>
+      <div class="thread">${liste || `<p class="leise klein" style="padding:12px 0">Noch keine Kommentare.</p>`}</div>
+      <form id="kf" data-art="${art}" data-id="${id}" data-kunde="${kundeId}" novalidate style="margin-top:20px;max-width:720px">
+        <label class="feld"><span class="label">${t("Ihr Kommentar", "Dein Kommentar")}</span><textarea name="text" rows="3" maxlength="5000"></textarea></label>
+        <button class="btn" type="submit">Senden</button><div class="m"></div></form></section>`;
+  }
+  function kommentarVerdrahten(danach) {
+    const f = document.getElementById("kf");
+    if (!f) return;
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const text = f.text.value.trim();
+      if (!text) return meldung(f.querySelector(".m"), "Bitte einen Text eingeben.");
+      const k = f.querySelector("button"); k.disabled = true;
+      const { error } = await sb.from("kommentare").insert({ kunde_id: f.dataset.kunde, bezug_art: f.dataset.art, bezug_id: f.dataset.id, text });
+      if (error) { k.disabled = false; return meldung(f.querySelector(".m"), fehlerText(error)); }
+      danach();
+    };
+  }
 
   async function zaehlerKunde() {
     const [e, a] = await Promise.all([
@@ -255,26 +283,38 @@
   }
 
   async function uebersicht() {
-    const [z, b, e, a] = await Promise.all([
+    const [z, b, e, a, an] = await Promise.all([
       zaehlerKunde(),
-      sb.from("berichte").select("id,art,titel,zeitraum,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).order("freigegeben_am", { ascending: false }).limit(4),
-      sb.from("entscheidungen").select("id,frage,frist").eq("status", "offen").order("erstellt").limit(5),
-      sb.from("aufgaben").select("titel,frist").eq("liegt_bei", "kunde").eq("erledigt", false).order("frist", { nullsFirst: false }).limit(5),
+      sb.from("berichte").select("id,art,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(12),
+      sb.from("entscheidungen").select("id,frage,frist,wenn_nein").eq("status", "offen").order("erstellt").limit(5),
+      sb.from("aufgaben").select("id,titel,frist").eq("liegt_bei", "kunde").eq("erledigt", false).order("frist", { nullsFirst: false }).limit(5),
+      sb.from("anliegen").select("id,titel,status,aktualisiert").neq("status", "erledigt").order("aktualisiert", { ascending: false }).limit(3),
     ]);
-    const neu = b.data?.[0];
-    const kopf = neu
-      ? `<div class="label kicker">Neu · ${esc(neu.titel)}</div><h1>${esc(S.kunde.name)}</h1>${neu.zusammenfassung ? `<p class="lead">${esc(neu.zusammenfassung)}</p>` : ""}<p style="margin-top:24px"><a class="btn" href="#/berichte/${neu.id}">${esc(neu.titel)} lesen</a></p>`
-      : `<div class="label kicker">Kundenportal</div><h1>${esc(S.kunde.name)}</h1><div class="leer"><span>Der erste Bericht liegt hier, sobald er freigegeben ist.</span></div>`;
-    const ents = (e.data || []).map((x) => `<li><div><div class="titel">${esc(x.frage)}</div>${x.frist ? `<div class="unter">Frist: ${esc(x.frist)}</div>` : ""}</div><div class="aktionen"><a href="#/entscheidungen">Entscheiden</a></div></li>`).join("");
-    const aufg = (a.data || []).map((x) => `<li><div><div class="titel">${esc(x.titel)}</div>${x.frist ? `<div class="unter">bis ${datum(x.frist)}</div>` : ""}</div></li>`).join("");
+    const alle = b.data || [];
+    const woche = alle.find((r) => r.art === "wochenstand");
+    const monat = alle.find((r) => r.art === "monatsauswertung");
+    // „Was ist los“: die Kurzfassung des neuesten Berichts, ein Satz je Zeile
+    const lageQuelle = woche || monat;
+    const lage = (lageQuelle?.zusammenfassung || "").split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    const hallo = vorname() ? `${du() ? "Hallo" : "Guten Tag"} ${esc(vorname())}, das ist gerade los.` : "Das ist gerade los.";
+    const kopf = lage.length
+      ? `<div class="label">Stand ${esc(lageQuelle.zeitraum)}</div><h1 style="margin-top:10px">${hallo}</h1><div class="lage">${lage.map((x) => `<p>${esc(x)}</p>`).join("")}</div>`
+      : `<div class="label">Kundenportal · ${esc(S.kunde.name)}</div><h1 style="margin-top:10px">${hallo}</h1><div class="leer" style="max-width:760px"><span>Der erste Bericht liegt hier, sobald er freigegeben ist.</span></div>`;
+    const wartet = [
+      ...(e.data || []).map((x) => `<li><div><div class="label">Entscheidung</div><div class="titel">${esc(x.frage)}</div>${x.frist ? `<div class="unter">Frist: ${esc(x.frist)}</div>` : ""}</div><div class="aktionen"><a class="btn" href="#/entscheidungen">Entscheiden</a></div></li>`),
+      ...(a.data || []).map((x) => `<li><div><div class="label">Aufgabe</div><div class="titel"><a href="#/aufgaben/${x.id}">${esc(x.titel)}</a></div><div class="unter">${x.frist ? "bis " + datum(x.frist) : t("Liegt bei Ihnen", "Liegt bei dir")}</div></div></li>`),
+    ].join("");
+    const neu = [
+      woche ? `<li><div><div class="label">Montagsbrief</div><div class="titel">${esc(woche.zeitraum)}</div><div class="unter">freigegeben am ${datum(woche.freigegeben_am)}</div></div><div class="aktionen"><a class="btn zwei" href="#/berichte/${woche.id}">Lesen</a></div></li>` : "",
+      monat ? `<li><div><div class="label">Monatsauswertung</div><div class="titel">${esc(monat.zeitraum)}</div><div class="unter">Im Browser und als PDF</div></div><div class="aktionen"><a class="btn zwei" href="#/berichte/${monat.id}">Lesen</a></div></li>` : "",
+      ...(an.data || []).map((x) => `<li><div><div class="label">Anliegen · ${esc(ANLIEGEN_STATUS[x.status])}</div><div class="titel"><a href="#/anliegen/${x.id}">${esc(x.titel)}</a></div><div class="unter">zuletzt ${zeit(x.aktualisiert)}</div></div></li>`),
+      `<li><div><div class="label">Anliegen</div><div class="titel">Etwas loswerden</div><div class="unter">Frage oder Auftrag direkt hier einstellen</div></div><div class="aktionen"><a class="btn" href="#/anliegen/neu">Neues Anliegen</a></div></li>`,
+    ].join("");
     rahmen(`${kopf}
-      <div class="raster">
-        <div><div class="label">Offene Entscheidungen</div><div class="wert">${z.entscheidungen}</div><div class="klein leise">${z.entscheidungen ? t("warten auf Ihre Antwort", "warten auf deine Antwort") : "Gerade gibt es nichts zu entscheiden."}</div></div>
-        <div><div class="label">${t("Liegt bei Ihnen", "Liegt bei dir")}</div><div class="wert">${z.aufgaben}</div><div class="klein leise">offene Aufgaben</div></div>
-        <div><div class="label">Letzter Bericht</div><div class="wert" style="font-size:28px;margin-top:14px">${neu ? esc(neu.zeitraum) : "–"}</div><div class="klein leise">${neu ? "freigegeben am " + datum(neu.freigegeben_am) : ""}</div></div>
-      </div>
-      ${ents ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Zu entscheiden</h2><a href="#/entscheidungen">Alle Entscheidungen</a></div><ul class="liste">${ents}</ul></section>` : ""}
-      ${aufg ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>${t("Liegt bei Ihnen", "Liegt bei dir")}</h2><a href="#/aufgaben">Alle Aufgaben</a></div><ul class="liste">${aufg}</ul></section>` : ""}`,
+      <div class="zwei-spalten abschnitt" style="margin-top:48px">
+        <section><div class="abschnitt-kopf"><h2>${t("Wartet auf Sie", "Wartet auf dich")}</h2></div>${wartet ? `<ul class="liste">${wartet}</ul>` : `<div class="leer">Gerade wartet nichts auf ${t("Sie", "dich")}.</div>`}</section>
+        <section><div class="abschnitt-kopf"><h2>Neu für ${t("Sie", "dich")}</h2></div><ul class="liste">${neu}</ul></section>
+      </div>`,
       KUNDE_REITER, "", z);
   }
 
@@ -320,7 +360,9 @@
     const frei = intern && r.status !== "freigegeben" ? `<button class="btn" data-frei="${r.id}">Für den Kunden freigeben</button>` : "";
     rahmen(`<a class="zurueck" href="#/${zurueck}">Zurück zur Übersicht</a>
       <div class="abschnitt-kopf" style="border:0"><div><div class="label kicker">${r.art === "monatsauswertung" ? "Monatsauswertung" : "Wochenstand"}${intern ? " · " + esc(r.status) : ""}</div><h1>${esc(r.zeitraum)}</h1></div><div class="aktionen" style="display:flex;gap:12px;flex-wrap:wrap">${frei}${pdf}</div></div>
-      <div class="bericht-rahmen"><iframe id="ber" title="${esc(r.titel)}" sandbox="allow-same-origin"></iframe></div>`, reiter, intern ? "intern" : "berichte");
+      <div class="bericht-rahmen"><iframe id="ber" title="${esc(r.titel)}" sandbox="allow-same-origin"></iframe></div>
+      ${await kommentare("bericht", r.id, r.kunde_id)}`, reiter, intern ? "intern" : "berichte");
+    kommentarVerdrahten(() => berichtAnzeigen(id, intern));
     pdfKnoepfe();
     if (intern) freigabeKnoepfe();
     try {
@@ -380,7 +422,7 @@
 
   async function aufgaben() {
     const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").order("frist", { nullsFirst: false })]);
-    const liste = (arr) => arr.length ? `<ul class="liste">${arr.map((x) => `<li><div><div class="titel">${esc(x.titel)}</div><div class="unter">${x.frist ? "bis " + datum(x.frist) : "ohne Frist"}</div></div></li>`).join("")}</ul>` : `<div class="leer">Nichts offen.</div>`;
+    const liste = (arr) => arr.length ? `<ul class="liste">${arr.map((x) => `<li><div><div class="titel"><a href="#/aufgaben/${x.id}">${esc(x.titel)}</a></div><div class="unter">${x.frist ? "bis " + datum(x.frist) : "ohne Frist"}</div></div></li>`).join("")}</ul>` : `<div class="leer">Nichts offen.</div>`;
     const offen = (data || []).filter((x) => !x.erledigt);
     const erledigt = (data || []).filter((x) => x.erledigt).slice(0, 20);
     rahmen(`<div class="label kicker">Aufgaben</div><h1>Wer gerade was in der Hand hat</h1>
@@ -390,6 +432,76 @@
       </div>
       ${erledigt.length ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Zuletzt erledigt</h2></div><ul class="liste">${erledigt.map((x) => `<li><div><div class="titel leise">${esc(x.titel)}</div></div></li>`).join("")}</ul></section>` : ""}`,
       KUNDE_REITER, "aufgaben", z);
+  }
+
+  async function aufgabeAnzeigen(id) {
+    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").eq("id", id).maybeSingle()]);
+    if (!x) return rahmen(`<a class="zurueck" href="#/aufgaben">Alle Aufgaben</a><div class="leer">Diese Aufgabe gibt es nicht.</div>`, KUNDE_REITER, "aufgaben", z);
+    rahmen(`<a class="zurueck" href="#/aufgaben">Alle Aufgaben</a>
+      <div class="label kicker">Aufgabe · ${x.erledigt ? "erledigt" : x.liegt_bei === "kunde" ? t("liegt bei Ihnen", "liegt bei dir") : "liegt bei uns"}</div>
+      <h1 style="font-size:clamp(28px,3.4vw,38px)">${esc(x.titel)}</h1>${x.frist ? `<p class="leise" style="margin-top:8px">bis ${datum(x.frist)}</p>` : ""}
+      ${await kommentare("aufgabe", x.id, x.kunde_id)}`, KUNDE_REITER, "aufgaben", z);
+    kommentarVerdrahten(() => aufgabeAnzeigen(id));
+  }
+
+  // ---------- Anliegen ----------
+  async function anliegenSeite() {
+    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("id,titel,status,erstellt_name,erstellt,aktualisiert").order("aktualisiert", { ascending: false })]);
+    const zeile = (x) => `<li><div><div class="titel"><a href="#/anliegen/${x.id}">${esc(x.titel)}</a><span class="marke${x.status === "erledigt" ? " gruen" : ""}">${esc(ANLIEGEN_STATUS[x.status])}</span></div><div class="unter">${esc(x.erstellt_name || "")} · ${zeit(x.erstellt)}</div></div></li>`;
+    const offen = (data || []).filter((x) => x.status !== "erledigt");
+    const fertig = (data || []).filter((x) => x.status === "erledigt");
+    rahmen(`<div class="label kicker">Anliegen</div><h1>Fragen und Aufträge</h1>
+      <p class="lead">${t("Stellen Sie hier ein, was Sie von uns brauchen.", "Stell hier ein, was du von uns brauchst.")} Wir antworten im Anliegen, alles bleibt an einem Ort.</p>
+      <p style="margin-top:24px"><a class="btn" href="#/anliegen/neu">Neues Anliegen</a></p>
+      <section class="abschnitt" style="margin-top:48px"><div class="abschnitt-kopf"><h2>Offen</h2></div>${offen.length ? `<ul class="liste">${offen.map(zeile).join("")}</ul>` : `<div class="leer">Nichts offen.</div>`}</section>
+      ${fertig.length ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Erledigt</h2></div><ul class="liste">${fertig.slice(0, 30).map(zeile).join("")}</ul></section>` : ""}`,
+      KUNDE_REITER, "anliegen", z);
+  }
+
+  async function anliegenNeu() {
+    const z = await zaehlerKunde();
+    rahmen(`<a class="zurueck" href="#/anliegen">Alle Anliegen</a><div class="label kicker">Neues Anliegen</div><h1>Worum geht es?</h1>
+      <form id="af" novalidate style="max-width:720px;margin-top:32px">
+        <label class="feld"><span class="label">Betreff</span><input type="text" name="titel" maxlength="200" required placeholder="z. B. Black Friday Week: machen wir mit?"></label>
+        <label class="feld"><span class="label">Beschreibung</span><textarea name="text" rows="6" maxlength="10000"></textarea></label>
+        <p class="klein leise" style="margin:-4px 0 16px">Dateien ${t("können Sie", "kannst du")} danach unter Dateien hochladen.</p>
+        <button class="btn" type="submit">Anliegen senden</button><div class="m"></div></form>`, KUNDE_REITER, "anliegen", z);
+    const f = document.getElementById("af");
+    f.titel.focus();
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const titel = f.titel.value.trim();
+      if (!titel) return meldung(f.querySelector(".m"), "Bitte einen Betreff eingeben.");
+      const k = f.querySelector("button"); k.disabled = true; k.textContent = "Wird gesendet";
+      const { data, error } = await sb.from("anliegen").insert({ kunde_id: S.kunde.id, titel, text: f.text.value.trim() || null }).select("id").single();
+      if (error) { k.disabled = false; k.textContent = "Anliegen senden"; return meldung(f.querySelector(".m"), fehlerText(error)); }
+      geh("anliegen/" + data.id);
+    };
+  }
+
+  async function anliegenKopf(x) {
+    return `<div class="label kicker">Anliegen</div><h1 style="font-size:clamp(28px,3.4vw,38px)">${esc(x.titel)}</h1>
+      <div class="status">${esc(ANLIEGEN_STATUS[x.status])}</div>
+      <div class="kom" style="border-top:1px solid var(--ink);margin-top:22px"><div class="wer"><b>${esc(x.erstellt_name || "")}</b> · ${zeit(x.erstellt)}</div><div class="text">${x.text ? esc(x.text) : '<span class="leise">Ohne Beschreibung</span>'}</div></div>`;
+  }
+
+  async function anliegenAnzeigen(id) {
+    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("*").eq("id", id).maybeSingle()]);
+    if (!x) return rahmen(`<a class="zurueck" href="#/anliegen">Alle Anliegen</a><div class="leer">Dieses Anliegen gibt es nicht.</div>`, KUNDE_REITER, "anliegen", z);
+    rahmen(`<a class="zurueck" href="#/anliegen">Alle Anliegen</a>${await anliegenKopf(x)}${await kommentare("anliegen", x.id, x.kunde_id)}`, KUNDE_REITER, "anliegen", z);
+    kommentarVerdrahten(() => anliegenAnzeigen(id));
+  }
+
+  // ---------- Roadmap ----------
+  async function roadmapSeite() {
+    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("roadmap").select("*").order("reihenfolge").order("titel")]);
+    const gruppe = (st) => {
+      const arr = (data || []).filter((r) => r.status === st);
+      return arr.length ? `<section class="abschnitt" style="margin-top:40px"><div class="abschnitt-kopf"><h2>${ROADMAP_STATUS[st]}</h2></div><ul class="liste">${arr.map((r) => `<li><div><div class="titel">${esc(r.titel)}</div>${r.beschreibung ? `<div class="unter" style="margin-top:4px">${esc(r.beschreibung)}</div>` : ""}</div><div class="aktionen leise klein">${esc(r.zeitraum || "")}</div></li>`).join("")}</ul></section>` : "";
+    };
+    rahmen(`<div class="label kicker">Roadmap</div><h1>Was wir gemeinsam vorhaben</h1>
+      ${data?.length ? gruppe("laeuft") + gruppe("geplant") + gruppe("erledigt") : `<div class="leer" style="margin-top:32px">Die Roadmap wird gerade aufgebaut.</div>`}`,
+      KUNDE_REITER, "roadmap", z);
   }
 
   function dateiZeile(d, intern) {
@@ -459,7 +571,7 @@
   }
 
   // ---------- Interner Bereich ----------
-  const INTERN_REITER = [["intern", "Berichte"], ["intern/entscheidungen", "Antworten"], ["intern/dateien", "Dateien"], ["intern/aufgaben", "Aufgaben"], ["intern/werkzeuge", "Werkzeuge"], ["intern/protokoll", "Protokoll"]];
+  const INTERN_REITER = [["intern", "Berichte"], ["intern/entscheidungen", "Antworten"], ["intern/anliegen", "Anliegen"], ["intern/dateien", "Dateien"], ["intern/aufgaben", "Aufgaben"], ["intern/roadmap", "Roadmap"], ["intern/werkzeuge", "Werkzeuge"], ["intern/zugaenge", "Zugänge"], ["intern/protokoll", "Protokoll"]];
   function kundenwahl() {
     return `<div class="leiste"><label class="feld"><span class="label">Kunde</span><select id="kw">${S.kunden.map((k) => `<option value="${k.id}" ${k.id === S.internKunde?.id ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select></label></div>`;
   }
@@ -468,8 +580,11 @@
     if (s) s.onchange = () => { S.internKunde = S.kunden.find((k) => k.id === s.value); lokal.set("intern-kunde", s.value); neu(); };
   }
   async function zaehlerIntern() {
-    const { count } = await sb.from("entscheidungen").select("id", { count: "exact", head: true }).eq("status", "beantwortet");
-    return { "intern/entscheidungen": count || 0 };
+    const [e, a] = await Promise.all([
+      sb.from("entscheidungen").select("id", { count: "exact", head: true }).eq("status", "beantwortet"),
+      sb.from("anliegen").select("id", { count: "exact", head: true }).eq("status", "offen"),
+    ]);
+    return { "intern/entscheidungen": e.count || 0, "intern/anliegen": a.count || 0 };
   }
   function freigabeKnoepfe() {
     app.querySelectorAll("[data-frei]").forEach((k) => (k.onclick = async () => {
@@ -575,10 +690,129 @@
     }));
   }
 
+  async function internAnliegen() {
+    const k = S.internKunde;
+    const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("anliegen").select("*").eq("kunde_id", k.id).order("aktualisiert", { ascending: false })]);
+    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Anliegen der Kunden</h1><div style="margin-top:32px">${kundenwahl()}</div>
+      ${data?.length ? `<ul class="liste">${data.map((x) => `<li><div><div class="titel"><a href="#/intern/anliegen/${x.id}">${esc(x.titel)}</a><span class="marke${x.status === "offen" ? " rot" : x.status === "erledigt" ? " gruen" : ""}">${esc(ANLIEGEN_STATUS[x.status])}</span></div><div class="unter">${esc(x.erstellt_name || "")} · ${zeit(x.erstellt)} · zuletzt ${zeit(x.aktualisiert)}</div></div></li>`).join("")}</ul>` : `<div class="leer">Keine Anliegen von ${esc(k.name)}.</div>`}`,
+      INTERN_REITER, "intern/anliegen", z);
+    kundenwahlVerdrahten(internAnliegen);
+  }
+
+  async function internAnliegenAnzeigen(id) {
+    const [z, { data: x }] = await Promise.all([zaehlerIntern(), sb.from("anliegen").select("*").eq("id", id).maybeSingle()]);
+    if (!x) return rahmen(`<a class="zurueck" href="#/intern/anliegen">Alle Anliegen</a><div class="leer">Dieses Anliegen gibt es nicht.</div>`, INTERN_REITER, "intern/anliegen", z);
+    const wahl = Object.entries(ANLIEGEN_STATUS).map(([w, n]) => `<option value="${w}" ${w === x.status ? "selected" : ""}>${n}</option>`).join("");
+    rahmen(`<a class="zurueck" href="#/intern/anliegen">Alle Anliegen</a>${await anliegenKopf(x)}
+      <div class="leiste" style="margin-top:20px"><label class="feld"><span class="label">Status ändern</span><select id="st">${wahl}</select></label></div>
+      ${await kommentare("anliegen", x.id, x.kunde_id)}`, INTERN_REITER, "intern/anliegen", z);
+    document.getElementById("st").onchange = async (ev) => {
+      const { error } = await sb.from("anliegen").update({ status: ev.target.value, aktualisiert: new Date().toISOString() }).eq("id", id);
+      if (error) return alertLeise(fehlerText(error));
+      internAnliegenAnzeigen(id);
+    };
+    kommentarVerdrahten(() => internAnliegenAnzeigen(id));
+  }
+
+  async function internRoadmap() {
+    const k = S.internKunde;
+    const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("roadmap").select("*").eq("kunde_id", k.id).order("reihenfolge").order("titel")]);
+    const wahl = (st) => Object.entries(ROADMAP_STATUS).map(([w, n]) => `<option value="${w}" ${w === st ? "selected" : ""}>${n}</option>`).join("");
+    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Roadmap</h1>
+      <p class="lead">Der Kunde sieht nur Punkte mit „sichtbar“.</p><div style="margin-top:32px">${kundenwahl()}</div>
+      ${data?.length ? `<ul class="liste">${data.map((r) => `<li><div><div class="titel">${esc(r.titel)}${r.sichtbar ? '<span class="marke gruen">sichtbar</span>' : '<span class="marke">intern</span>'}</div><div class="unter">${esc(r.beschreibung || "")}${r.zeitraum ? " · " + esc(r.zeitraum) : ""}</div></div>
+        <div class="aktionen"><select data-rstatus="${r.id}" style="width:auto;padding:6px 8px;font-size:14px">${wahl(r.status)}</select><button class="text" data-rsicht="${r.id}" data-wert="${r.sichtbar}">${r.sichtbar ? "Ausblenden" : "Sichtbar machen"}</button><button class="text" data-rweg="${r.id}">Löschen</button></div></li>`).join("")}</ul>` : `<div class="leer">Noch keine Roadmap für ${esc(k.name)}.</div>`}
+      <section class="abschnitt"><div class="abschnitt-kopf"><h2>Punkt hinzufügen</h2></div>
+      <form id="rf" novalidate style="max-width:560px;margin-top:16px"><label class="feld"><span class="label">Titel</span><input type="text" name="titel" required></label>
+      <label class="feld"><span class="label">Beschreibung</span><textarea name="beschreibung" rows="2"></textarea></label>
+      <label class="feld"><span class="label">Zeitraum (frei, z. B. Q1 2027)</span><input type="text" name="zeitraum"></label>
+      <label class="feld"><span class="label">Status</span><select name="status">${wahl("geplant")}</select></label>
+      <label class="feld" style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="sichtbar"> <span style="margin:0">für den Kunden sichtbar</span></label>
+      <button class="btn" type="submit">Hinzufügen</button><div class="m"></div></form></section>`,
+      INTERN_REITER, "intern/roadmap", z);
+    kundenwahlVerdrahten(internRoadmap);
+    const f = document.getElementById("rf");
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      if (!f.titel.value.trim()) return meldung(f.querySelector(".m"), "Bitte einen Titel angeben.");
+      const { error } = await sb.from("roadmap").insert({ kunde_id: k.id, titel: f.titel.value.trim(), beschreibung: f.beschreibung.value.trim() || null, zeitraum: f.zeitraum.value.trim() || null, status: f.status.value, sichtbar: f.sichtbar.checked, reihenfolge: (data?.length || 0) + 1 });
+      if (error) return meldung(f.querySelector(".m"), fehlerText(error));
+      internRoadmap();
+    };
+    app.querySelectorAll("[data-rstatus]").forEach((s2) => (s2.onchange = async () => { await sb.from("roadmap").update({ status: s2.value }).eq("id", s2.dataset.rstatus); internRoadmap(); }));
+    app.querySelectorAll("[data-rsicht]").forEach((b) => (b.onclick = async () => { await sb.from("roadmap").update({ sichtbar: b.dataset.wert !== "true" }).eq("id", b.dataset.rsicht); internRoadmap(); }));
+    app.querySelectorAll("[data-rweg]").forEach((b) => (b.onclick = async () => {
+      if (!confirmLeise(b, "Punkt endgültig löschen?")) return;
+      await sb.from("roadmap").delete().eq("id", b.dataset.rweg); internRoadmap();
+    }));
+  }
+
+  // Zugänge: wer sich anmelden darf (Liste) und wer schon ein Konto hat (Personen)
+  async function internZugaenge() {
+    const k = S.internKunde;
+    const [z, { data: liste }, { data: personen }, { data: team }] = await Promise.all([
+      zaehlerIntern(),
+      sb.from("zugangsliste").select("*").eq("kunde_id", k.id).order("wert"),
+      sb.from("mitglieder").select("user_id,email,anzeigename,anrede,gesperrt_am,letzte_anmeldung").eq("kunde_id", k.id).order("email"),
+      sb.from("mitglieder").select("user_id,email,anzeigename,gesperrt_am,team_bestaetigt_am,letzte_anmeldung").eq("rolle", "team").order("email"),
+    ]);
+    const ich = S.user?.id;
+    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Zugänge</h1>
+      <p class="lead">Anmelden kann sich nur, wer hier auf der Liste steht: als einzelne Adresse oder über die Firmen-Domain. Freemail-Domains gehen nur als einzelne Adresse.</p>
+      <div style="margin-top:32px">${kundenwahl()}</div>
+      <section class="abschnitt" style="margin-top:8px"><div class="abschnitt-kopf"><h2>Zugangsliste ${esc(k.name)}</h2></div>
+      ${liste?.length ? `<ul class="liste">${liste.map((l) => `<li><div><div class="titel">${esc(l.wert)}<span class="marke">${l.art === "domain" ? "Domain" : "Adresse"}</span></div><div class="unter">${esc(l.anzeigename || "Name aus der Adresse")} · Anrede ${esc(l.anrede || k.anrede || "Sie")}</div></div><div class="aktionen"><button class="text" data-lweg="${l.id}">Entfernen</button></div></li>`).join("")}</ul>` : `<div class="leer">Noch niemand auf der Liste.</div>`}
+      <form id="zf" novalidate style="max-width:640px;margin-top:20px">
+        <div style="display:grid;grid-template-columns:150px 1fr;gap:12px"><label class="feld"><span class="label">Art</span><select name="art"><option value="adresse">Adresse</option><option value="domain">Domain</option></select></label>
+        <label class="feld"><span class="label">Adresse oder Domain</span><input type="text" name="wert" autocapitalize="none" spellcheck="false" placeholder="name@firma.de oder firma.de"></label></div>
+        <div style="display:grid;grid-template-columns:1fr 150px;gap:12px"><label class="feld"><span class="label">Name (bei Adresse)</span><input type="text" name="name" placeholder="Vorname Nachname"></label>
+        <label class="feld"><span class="label">Anrede</span><select name="anrede"><option value="">wie Kunde</option><option value="du">du</option><option value="Sie">Sie</option></select></label></div>
+        <button class="btn" type="submit">Auf die Liste setzen</button><div class="m"></div></form></section>
+      <section class="abschnitt"><div class="abschnitt-kopf"><h2>Personen mit Konto</h2></div>
+      ${personen?.length ? `<ul class="liste">${personen.map((p) => `<li><div><div class="titel">${esc(p.anzeigename || p.email)}${p.gesperrt_am ? '<span class="marke rot">gesperrt</span>' : ""}</div><div class="unter">${esc(p.email || "")} · ${p.letzte_anmeldung ? "zuletzt angemeldet " + zeit(p.letzte_anmeldung) : "noch nie angemeldet"}</div></div><div class="aktionen"><button class="text" data-sperre="${p.user_id}" data-wert="${p.gesperrt_am ? "1" : ""}">${p.gesperrt_am ? "Entsperren" : "Sperren"}</button></div></li>`).join("")}</ul>` : `<div class="leer">Noch niemand von ${esc(k.name)} hat sich angemeldet.</div>`}</section>
+      <section class="abschnitt"><div class="abschnitt-kopf"><h2>Team</h2></div>
+      <p class="klein leise" style="margin:8px 0">Ein neues Team-Konto braucht den zweiten Faktor und die Freischaltung durch ein anderes Team-Mitglied.</p>
+      <ul class="liste">${(team || []).map((p) => `<li><div><div class="titel">${esc(p.anzeigename || p.email)}${p.team_bestaetigt_am ? '<span class="marke gruen">freigeschaltet</span>' : '<span class="marke">wartet</span>'}${p.gesperrt_am ? '<span class="marke rot">gesperrt</span>' : ""}</div><div class="unter">${esc(p.email || "")} · ${p.letzte_anmeldung ? "zuletzt angemeldet " + zeit(p.letzte_anmeldung) : "noch nie angemeldet"}</div></div><div class="aktionen">${p.user_id === ich ? '<span class="klein leise">Das bist du</span>' : `<button class="text" data-frei-team="${p.user_id}" data-wert="${p.team_bestaetigt_am ? "1" : ""}">${p.team_bestaetigt_am ? "Freischaltung entziehen" : "Freischalten"}</button>`}</div></li>`).join("")}</ul></section>`,
+      INTERN_REITER, "intern/zugaenge", z);
+    kundenwahlVerdrahten(internZugaenge);
+    const f = document.getElementById("zf");
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const m = f.querySelector(".m");
+      const wert = f.wert.value.trim().toLowerCase().replace(/^@/, "");
+      const art = f.art.value;
+      if (art === "adresse" && !istMail(wert)) return meldung(m, "Bitte eine gültige Mail-Adresse eingeben.");
+      if (art === "domain" && !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(wert)) return meldung(m, "Bitte nur die Domain eingeben, z. B. firma.de");
+      const { error } = await sb.from("zugangsliste").insert({ rolle: "kunde", kunde_id: k.id, art, wert, anzeigename: art === "adresse" ? f.name.value.trim() || null : null, anrede: f.anrede.value || null });
+      if (error) return meldung(m, /keine_freemail/.test(error.message) ? "Freemail-Domains gehen nur als einzelne Adresse." : /duplicate|unique/i.test(error.message) ? "Diese Adresse oder Domain steht schon auf der Liste." : fehlerText(error));
+      internZugaenge();
+    };
+    app.querySelectorAll("[data-lweg]").forEach((b) => (b.onclick = async () => {
+      if (!confirmLeise(b, "Entfernen sperrt auch die Personen, die nur über diesen Eintrag Zugang hatten.")) return;
+      const { error } = await sb.from("zugangsliste").delete().eq("id", b.dataset.lweg);
+      if (error) return alertLeise(fehlerText(error));
+      internZugaenge();
+    }));
+    app.querySelectorAll("[data-sperre]").forEach((b) => (b.onclick = async () => {
+      const sperren = !b.dataset.wert;
+      if (sperren && !confirmLeise(b, "Die Person kommt danach nicht mehr ins Portal.")) return;
+      const { error } = await sb.from("mitglieder").update({ gesperrt_am: sperren ? new Date().toISOString() : null }).eq("user_id", b.dataset.sperre);
+      if (error) return alertLeise(fehlerText(error));
+      internZugaenge();
+    }));
+    app.querySelectorAll("[data-frei-team]").forEach((b) => (b.onclick = async () => {
+      const frei = !b.dataset.wert;
+      if (!confirmLeise(b, frei ? "Die Person sieht danach alle Kunden." : "Die Person verliert den Zugang zum internen Bereich.")) return;
+      const { error } = await sb.from("mitglieder").update({ team_bestaetigt_am: frei ? new Date().toISOString() : null }).eq("user_id", b.dataset.freiTeam);
+      if (error) return alertLeise(fehlerText(error));
+      internZugaenge();
+    }));
+  }
+
   async function internProtokoll() {
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("protokoll").select("*").eq("kunde_id", k.id).order("zeit", { ascending: false }).limit(200)]);
-    const text = { anmeldung: "Anmeldung", bericht_geoeffnet: "Bericht geöffnet", bericht_freigegeben: "Bericht freigegeben", bericht_abgelegt: "Bericht als Entwurf abgelegt", entscheidung_beantwortet: "Entscheidung beantwortet", datei_vom_kunden: "Datei hochgeladen (Kunde)", datei_von_uns: "Datei bereitgestellt (wir)" };
+    const text = { person_gesperrt: "Person gesperrt", person_entsperrt: "Person entsperrt", team_freigeschaltet: "Team freigeschaltet", team_freischaltung_entzogen: "Team-Freischaltung entzogen", anliegen_angelegt: "Anliegen angelegt", kommentar: "Kommentar", anmeldung: "Anmeldung", bericht_geoeffnet: "Bericht geöffnet", bericht_freigegeben: "Bericht freigegeben", bericht_abgelegt: "Bericht als Entwurf abgelegt", entscheidung_beantwortet: "Entscheidung beantwortet", datei_vom_kunden: "Datei hochgeladen (Kunde)", datei_von_uns: "Datei bereitgestellt (wir)" };
     rahmen(`<div class="label kicker">Interner Bereich</div><h1>Protokoll</h1><div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<table class="protokoll"><thead><tr><th>Zeit</th><th>Vorgang</th><th>Details</th></tr></thead><tbody>${data.map((p) => `<tr><td>${zeit(p.zeit)}</td><td>${esc(text[p.aktion] || p.aktion)}</td><td>${esc(p.details ? Object.values(p.details).join(" · ") : "")}</td></tr>`).join("")}</tbody></table>` : `<div class="leer">Noch keine Vorgänge.</div>`}`,
       INTERN_REITER, "intern/protokoll", z);
@@ -595,11 +829,15 @@
         if (a !== "intern") return (location.hash = "#/intern");
         if (!b) return internBerichte();
         if (b === "vorschau") return berichtAnzeigen(c, true);
-        return ({ entscheidungen: internEntscheidungen, dateien: internDateien, aufgaben: internAufgaben, werkzeuge: internWerkzeuge, protokoll: internProtokoll }[b] || internBerichte)();
+        if (b === "anliegen" && c) return internAnliegenAnzeigen(c);
+        return ({ entscheidungen: internEntscheidungen, anliegen: internAnliegen, dateien: internDateien, aufgaben: internAufgaben, roadmap: internRoadmap, werkzeuge: internWerkzeuge, zugaenge: internZugaenge, protokoll: internProtokoll }[b] || internBerichte)();
       }
       document.title = `${S.kunde.name} · Kundenportal PPotthoff`;
       if (a === "berichte" && b) return berichtAnzeigen(b);
-      return ({ "": uebersicht, berichte, entscheidungen, aufgaben, dateien: dateienSeite, werkzeuge }[a] || uebersicht)();
+      if (a === "aufgaben" && b) return aufgabeAnzeigen(b);
+      if (a === "anliegen" && b === "neu") return anliegenNeu();
+      if (a === "anliegen" && b) return anliegenAnzeigen(b);
+      return ({ "": uebersicht, berichte, entscheidungen, aufgaben, anliegen: anliegenSeite, dateien: dateienSeite, roadmap: roadmapSeite, werkzeuge }[a] || uebersicht)();
     } catch (e) {
       alertLeise("Etwas hat nicht geladen: " + fehlerText(e));
     }
