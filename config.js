@@ -2,5 +2,4 @@
 window.PORTAL = {
   url: "https://arzhbbpzoqwhyykewsat.supabase.co",
   key: "sb_publishable_Y41XTDpmFgpQ2_vE30qadw_VGvMJ0gc",
-  kundenDomain: "kunden.portal.ppotthoff.io",
 };

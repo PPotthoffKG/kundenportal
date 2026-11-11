@@ -14,7 +14,7 @@
   const datum = (d) => (d ? new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
   const zeit = (d) => (d ? new Date(d).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
   const groesse = (b) => (b == null ? "" : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + " KB" : (b / 1024 / 1024).toFixed(1).replace(".", ",") + " MB");
-  const du = () => S.kunde?.anrede === "du";
+  const du = () => (S.mitglied?.anrede || S.kunde?.anrede) === "du";
   const t = (sie, duForm) => (du() ? duForm : sie);
   const lokal = {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -25,8 +25,11 @@
   const meldung = (el, text, art = "fehler") => { el.innerHTML = `<div class="meldung ${art}" role="${art === "fehler" ? "alert" : "status"}">${esc(text)}</div>`; };
   const fehlerText = (e) => {
     const m = (e && (e.message || e.error_description || e.msg)) || String(e);
-    if (/Invalid login credentials/i.test(m)) return "Kennung oder Passwort stimmen nicht. Bitte noch einmal versuchen.";
-    if (/Invalid TOTP|invalid.*code/i.test(m)) return "Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.";
+    if (/Invalid login credentials/i.test(m)) return "Mail-Adresse oder Passwort stimmen nicht. Bitte noch einmal versuchen.";
+    if (/Invalid TOTP/i.test(m)) return "Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.";
+    if (/expired|invalid/i.test(m)) return "Der Code stimmt nicht oder ist abgelaufen. Bitte einen neuen Code anfordern.";
+    if (/keinen Zugang|not allowed|Signups not allowed/i.test(m)) return "Für diese Adresse gibt es keinen Zugang. Bitte bei uns melden: kontakt@ppotthoff.io";
+    if (/rate limit|security purposes|seconds/i.test(m)) return "Zu viele Versuche. Bitte kurz warten und dann noch einmal.";
     return m;
   };
   async function laden(b, pfad) {
@@ -68,37 +71,111 @@
   }
 
   // ---------- Anmeldung ----------
-  function anmeldung(hinweis) {
+  // Kunden: Mail-Adresse, dann sechsstelliger Code per Mail. Ein Konto entsteht nur für Adressen auf der Zugangsliste
+  // (geprüft in der Datenbank). Team: wahlweise Passwort, danach immer der zweite Faktor.
+  const HERO = `<section class="hero">${LOGO}
+      <div><div class="label" style="color:var(--green-soft)">Kundenportal</div>
+      <h1 style="margin-top:12px">Zahlen.<em>Entscheidungen.</em></h1>
+      <p>Montagsbrief, Monatsauswertung, offene Entscheidungen, Aufgaben und Dateien an einem Ort.</p></div>
+      <div class="klein" style="color:var(--green-soft)">Gehostet in Frankfurt am Main · Verbindung verschlüsselt</div>
+    </section>`;
+  const istMail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+
+  function anmeldung(hinweis, vorbelegt = lokal.get("portal-mail") || "") {
     document.title = "Anmelden · Kundenportal PPotthoff";
     app.innerHTML = `
-      <div class="anmeldung">
-        <section class="hero">${LOGO}
-          <div><div class="label" style="color:var(--green-soft)">Kundenportal</div>
-          <h1 style="margin-top:12px">Ihre Zahlen.<em>Ihre Entscheidungen.</em></h1>
-          <p>Wochenstand, Monatsauswertung, offene Entscheidungen und Dateien an einem Ort.</p></div>
-          <div class="klein" style="color:var(--green-soft)">Gehostet in Frankfurt am Main · Verbindung verschlüsselt</div>
-        </section>
+      <div class="anmeldung">${HERO}
         <section class="form">
           <h2>Anmelden</h2>
+          <p class="leise" style="margin:-4px 0 20px">Mail-Adresse eingeben, Code per Mail bekommen, fertig. Kein Passwort.</p>
           <form id="f" novalidate>
-            <label class="feld"><span class="label">Kundenkennung (Team: E-Mail-Adresse)</span><input type="text" name="kennung" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
-            <label class="feld"><span class="label">Passwort</span><input type="password" name="passwort" autocomplete="current-password" required></label>
-            <button class="btn" type="submit">Anmelden</button>
+            <label class="feld"><span class="label">Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="email" autocapitalize="none" spellcheck="false" required></label>
+            <button class="btn" type="submit">Code anfordern</button>
             <div id="m">${hinweis ? `<div class="meldung ok" role="status">${esc(hinweis)}</div>` : ""}</div>
           </form>
-          <p class="klein leise" style="margin-top:24px">Kennung oder Passwort vergessen? Schreiben Sie an <a href="mailto:kontakt@ppotthoff.io">kontakt@ppotthoff.io</a>, wir setzen den Zugang neu.</p>
+          <p class="klein leise" style="margin-top:24px">Kein Code angekommen? Spam-Ordner ansehen oder an <a href="mailto:kontakt@ppotthoff.io">kontakt@ppotthoff.io</a> schreiben.</p>
+          <p class="klein" style="margin-top:12px"><button class="text" type="button" id="team">Anmeldung fürs Team mit Passwort</button></p>
         </section>
       </div>`;
     const f = document.getElementById("f");
-    f.kennung.focus();
+    (vorbelegt ? f.querySelector("button") : f.mail).focus();
+    document.getElementById("team").onclick = () => teamAnmeldung(f.mail.value.trim());
     f.onsubmit = async (ev) => {
       ev.preventDefault();
       const m = document.getElementById("m");
-      const kennung = f.kennung.value.trim().toLowerCase();
-      if (!kennung || !f.passwort.value) return meldung(m, "Bitte Kennung und Passwort eingeben.");
-      const email = kennung.includes("@") ? kennung : `${kennung}@${C.kundenDomain}`;
+      const mail = f.mail.value.trim().toLowerCase();
+      if (!istMail(mail)) return meldung(m, "Bitte eine gültige Mail-Adresse eingeben.");
+      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird gesendet";
+      const { error } = await sb.auth.signInWithOtp({ email: mail, options: { shouldCreateUser: true } });
+      knopf.disabled = false; knopf.textContent = "Code anfordern";
+      if (error) return meldung(m, fehlerText(error));
+      lokal.set("portal-mail", mail);
+      codeEingabe(mail);
+    };
+  }
+
+  function codeEingabe(mail) {
+    app.innerHTML = `
+      <div class="anmeldung">${HERO}
+        <section class="form">
+          <h2>Code eingeben</h2>
+          <p class="leise" style="margin:-4px 0 20px">Der Code ist unterwegs an <b>${esc(mail)}</b>. Er gilt zehn Minuten.</p>
+          <form id="f" novalidate>
+            <label class="feld"><span class="label">Sechsstelliger Code</span><input type="text" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" required></label>
+            <button class="btn" type="submit">Anmelden</button>
+            <div id="m"></div>
+          </form>
+          <p class="klein" style="margin-top:24px"><button class="text" type="button" id="neu">Neuen Code anfordern</button> · <button class="text" type="button" id="andere">Andere Adresse</button></p>
+        </section>
+      </div>`;
+    const f = document.getElementById("f");
+    f.code.focus();
+    // Code aus der Zwischenablage oder Autofill: bei sechs Ziffern direkt absenden
+    f.code.oninput = () => { f.code.value = f.code.value.replace(/\D/g, "").slice(0, 6); if (f.code.value.length === 6) f.requestSubmit(); };
+    document.getElementById("andere").onclick = () => anmeldung(null, "");
+    document.getElementById("neu").onclick = async () => {
+      const m = document.getElementById("m");
+      const { error } = await sb.auth.signInWithOtp({ email: mail, options: { shouldCreateUser: true } });
+      if (error) return meldung(m, fehlerText(error));
+      meldung(m, "Ein neuer Code ist unterwegs.", "ok");
+    };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const m = document.getElementById("m");
+      const code = f.code.value.replace(/\D/g, "");
+      if (code.length !== 6) return meldung(m, "Bitte die sechs Ziffern aus der Mail eingeben.");
       const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Lädt";
-      const { error } = await sb.auth.signInWithPassword({ email, password: f.passwort.value });
+      const { error } = await sb.auth.verifyOtp({ email: mail, token: code, type: "email" });
+      knopf.disabled = false; knopf.textContent = "Anmelden";
+      if (error) { f.code.value = ""; f.code.focus(); return meldung(m, fehlerText(error)); }
+      await start(true);
+    };
+  }
+
+  function teamAnmeldung(vorbelegt = "") {
+    app.innerHTML = `
+      <div class="anmeldung">${HERO}
+        <section class="form">
+          <h2>Team</h2>
+          <form id="f" novalidate>
+            <label class="feld"><span class="label">Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+            <label class="feld"><span class="label">Passwort</span><input type="password" name="passwort" autocomplete="current-password" required></label>
+            <button class="btn" type="submit">Anmelden</button>
+            <div id="m"></div>
+          </form>
+          <p class="klein" style="margin-top:24px"><button class="text" type="button" id="zur">Zurück zur Anmeldung mit Code</button></p>
+        </section>
+      </div>`;
+    const f = document.getElementById("f");
+    (vorbelegt ? f.passwort : f.mail).focus();
+    document.getElementById("zur").onclick = () => anmeldung();
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const m = document.getElementById("m");
+      const mail = f.mail.value.trim().toLowerCase();
+      if (!istMail(mail) || !f.passwort.value) return meldung(m, "Bitte Mail-Adresse und Passwort eingeben.");
+      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Lädt";
+      const { error } = await sb.auth.signInWithPassword({ email: mail, password: f.passwort.value });
       knopf.disabled = false; knopf.textContent = "Anmelden";
       if (error) return meldung(m, fehlerText(error));
       await start(true);
@@ -145,8 +222,10 @@
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return anmeldung();
     S.user = session.user;
-    const { data: m } = await sb.from("mitglieder").select("rolle,kunde_id,anzeigename").eq("user_id", S.user.id).maybeSingle();
-    if (!m) { await sb.auth.signOut(); return anmeldung("Dieser Zugang ist keinem Kunden zugeordnet. Bitte melden Sie sich bei uns."); }
+    const { data: m } = await sb.from("mitglieder").select("rolle,kunde_id,anzeigename,anrede,gesperrt_am,team_bestaetigt_am").eq("user_id", S.user.id).maybeSingle();
+    if (!m) { await sb.auth.signOut(); return anmeldung("Dieser Zugang ist keinem Kunden zugeordnet. Bitte bei uns melden: kontakt@ppotthoff.io"); }
+    if (m.gesperrt_am) { await sb.auth.signOut(); return anmeldung("Dieser Zugang ist gesperrt. Bitte bei uns melden: kontakt@ppotthoff.io"); }
+    if (m.rolle === "team" && !m.team_bestaetigt_am) { await sb.auth.signOut(); return anmeldung("Der Team-Zugang ist noch nicht freigeschaltet. Bitte ein anderes Team-Mitglied fragen."); }
     S.mitglied = m;
     if (m.rolle === "team") {
       const ok = await zweiFaktor();
@@ -269,12 +348,10 @@
     } else if (intern) {
       rechts = `<div class="ergebnis"><div class="label">Status</div><p style="margin-top:8px">${d.status === "entwurf" ? "Entwurf, sichtbar nach Freigabe des Berichts" : "offen beim Kunden"}</p></div>`;
     } else {
-      const name = esc(lokal.get("portal-name") || "");
       rechts = `<div class="antwort"><div class="label">${t("Ihre Entscheidung", "Deine Entscheidung")}</div>
         <form data-ent="${d.id}" novalidate style="margin-top:8px">
           <fieldset style="border:0"><legend class="sr">Ja oder Nein</legend><div class="janein">
             <label><input type="radio" name="a" value="ja"> Ja</label><label><input type="radio" name="a" value="nein"> Nein</label></div></fieldset>
-          <label class="feld" style="margin:0"><span class="label">Name</span><input type="text" name="name" value="${name}" autocomplete="name" required></label>
           <label class="feld" style="margin:0"><span class="label">Kommentar (optional)</span><textarea name="k" rows="2"></textarea></label>
           <button class="btn" type="submit">Entscheidung senden</button><div class="m"></div></form></div>`;
     }
@@ -294,11 +371,9 @@
       const m = f.querySelector(".m");
       const a = f.querySelector("input[name=a]:checked")?.value;
       if (!a) return meldung(m, "Bitte Ja oder Nein wählen.");
-      if (!f.name.value.trim()) return meldung(m, "Bitte den Namen angeben, damit wir wissen, wer entschieden hat.");
       const k = f.querySelector("button"); k.disabled = true; k.textContent = "Wird gesendet";
-      const { error } = await sb.rpc("entscheidung_beantworten", { p_id: f.dataset.ent, p_antwort: a, p_name: f.name.value.trim(), p_kommentar: f.k.value });
+      const { error } = await sb.rpc("entscheidung_beantworten", { p_id: f.dataset.ent, p_antwort: a, p_kommentar: f.k.value });
       if (error) { k.disabled = false; k.textContent = "Entscheidung senden"; return meldung(m, fehlerText(error)); }
-      lokal.set("portal-name", f.name.value.trim());
       entscheidungen();
     }));
   }
