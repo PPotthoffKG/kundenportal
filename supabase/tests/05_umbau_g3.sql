@@ -79,16 +79,18 @@ begin
   insert into storage.objects (bucket_id, name) values ('dateien', k1 || '/von-uns/richtung.pdf') on conflict do nothing;
   update public.berichte set werte_pfad = k1 || '/wochenstand/2026-11-02-werte.html' where id = 'b1000000-0000-0000-0000-000000000002';
   insert into storage.objects (bucket_id, name) values ('berichte', k1 || '/wochenstand/2026-11-02-werte.html') on conflict do nothing;
-  insert into public.entscheidungen (id, kunde_id, frage, empfehlung, status) values (e_a3, k1, 'Frage G3', 'Empfehlung', 'offen') on conflict (id) do update set status = 'offen', antwort = null;
+  insert into public.entscheidungen (id, kunde_id, frage, empfehlung, status) values (e_a3, k1, 'Frage G3', 'Empfehlung', 'offen') on conflict (id) do update set status = 'offen', antwort = null, kommentar = null;
   perform pruef.fehler('zweite Seite mit .. im Pfad', format('update public.berichte set werte_pfad = %1$L || ''/../'' || %2$L || ''/x.html'' where id = ''b1000000-0000-0000-0000-000000000001''', k1, k2));
 
   perform pruef.als('Tina (Team), Prüfung 15.11.', t, 'aal2');
   perform pruef.gelingt('kommentiert die nicht sichtbare Datei', format('insert into public.kommentare (kunde_id, bezug_art, bezug_id, text) values (%L, ''datei'', %L, ''intern zur Datei'')', k1, d_versteckt2));
   -- Team legt eine Datei im Ordner von-uns an, aber mit Richtung vom_kunden und ohne Freigabe (z. B. Fehler in der Ablage).
-  -- Ob die Datenbank das ablehnt oder nur verbirgt, ist offen; geprüft wird unten, dass Anna sie nicht sieht.
-  begin
-    insert into public.dateien (id, kunde_id, pfad, name, richtung, sichtbar) values (d_richtung, k1, k1 || '/von-uns/richtung.pdf', 'richtung.pdf', 'vom_kunden', false);
-  exception when others then null; end;
+  -- Seit der Nachbesserung lehnt die Prüfregel richtung_passt_zum_pfad das ab; unten wird zusätzlich geprüft, dass Anna nichts sieht.
+  perform pruef.kein_schreiben('Datei unter von-uns mit Richtung vom_kunden', format('insert into public.dateien (id, kunde_id, pfad, name, richtung, sichtbar) values (%L, %L, %L, ''richtung.pdf'', ''vom_kunden'', false)', d_richtung, k1, k1 || '/von-uns/richtung.pdf'));
+  perform pruef.kein_schreiben('Datei unter vom-kunden mit Richtung von_uns', format('insert into public.dateien (kunde_id, pfad, name, richtung) values (%1$L, %1$L || ''/vom-kunden/g3r.pdf'', ''x'', ''von_uns'')', k1));
+  perform pruef.kein_schreiben('nicht sichtbare Team-Datei auf Richtung vom_kunden umstellen', format('update public.dateien set richtung = ''vom_kunden'' where id = %L', d_versteckt2));
+  perform pruef.gelingt('legt Datei mit Bezug auf Aufgabe von Kunde A an', format('insert into public.dateien (kunde_id, pfad, name, richtung, bezug_art, bezug_id) values (%1$L, %1$L || ''/von-uns/g3k.pdf'', ''g3k.pdf'', ''von_uns'', ''aufgabe'', %2$L)', k1, auf_a));
+  perform pruef.kein_schreiben('verschiebt diese Datei zu Kunde B (Bezug bleibt bei Kunde A)', format('update public.dateien set kunde_id = %1$L, pfad = %1$L || ''/von-uns/g3k.pdf'' where pfad = %2$L', k2, k1 || '/von-uns/g3k.pdf'));
   perform pruef.kein_schreiben('Datei bei Kunde A mit Bezug auf Aufgabe von Kunde B', format('insert into public.dateien (kunde_id, pfad, name, richtung, bezug_art, bezug_id) values (%1$L, %1$L || ''/von-uns/g3t.pdf'', ''x'', ''von_uns'', ''aufgabe'', %2$L)', k1, auf_b));
   perform pruef.fehler('Team ohne Kundenzugang antwortet „intern“', format('select public.entscheidung_beantworten(%L, ''intern'')', e_a3));
 
@@ -114,6 +116,23 @@ begin
 
   perform pruef.als('Prüfer (Prüfung 15.11.)', null, 'aal1', 'postgres');
   perform pruef.zahl('Entscheidung nach zweimal „intern“ weiter offen, von Anna', format('select 1 from public.entscheidungen where id = %L and status = ''offen'' and antwort = ''intern'' and beantwortet_von_id = %L', e_a3, a), 1);
+
+  -- Nachbesserung: Kommentar zu „intern“ bleibt nach Ja ohne neuen Kommentar erhalten und steht im Protokoll
+  perform pruef.als('Anna (Kunde A), Nachbesserung', a);
+  perform pruef.gelingt('antwortet nach „intern“ Ja ohne Kommentar', format('select public.entscheidung_beantworten(%L, ''ja'')', e_a3));
+  perform pruef.als('Prüfer (Nachbesserung)', null, 'aal1', 'postgres');
+  perform pruef.zahl('Kommentar zu „intern“ bleibt nach Ja erhalten', format('select 1 from public.entscheidungen where id = %L and status = ''beantwortet'' and antwort = ''ja'' and kommentar = ''noch offen''', e_a3), 1);
+  perform pruef.zahl('Protokoll hält den Kommentar zu „intern“ fest', format('select 1 from public.protokoll where aktion = ''entscheidung_beantwortet'' and objekt = %L and details ->> ''antwort'' = ''intern'' and details ->> ''kommentar'' = ''noch offen''', e_a3), 1);
+
+  -- Nachbesserung: Freigabe einer Datei setzt sichtbar_am und sichtbar_von und wird protokolliert
+  perform pruef.als('Tina (Team), Nachbesserung', t, 'aal2');
+  perform pruef.gelingt('gibt die nicht sichtbare Datei frei', format('update public.dateien set sichtbar = true where id = %L', d_versteckt2));
+  perform pruef.als('Prüfer (Nachbesserung)', null, 'aal1', 'postgres');
+  perform pruef.zahl('Freigabe setzt sichtbar_am und sichtbar_von', format('select 1 from public.dateien where id = %L and sichtbar and sichtbar_am is not null and sichtbar_von = %L', d_versteckt2, t), 1);
+  perform pruef.zahl('Freigabe steht im Protokoll', format('select 1 from public.protokoll where aktion = ''datei_sichtbar'' and objekt = %L', d_versteckt2), 1);
+  perform pruef.als('Anna (Kunde A), nach Freigabe', a);
+  perform pruef.gelingt('kommentiert die jetzt freigegebene Datei', format('insert into public.kommentare (kunde_id, bezug_art, bezug_id, text) values (%L, ''datei'', %L, ''Danke'')', k1, d_versteckt2));
+  perform pruef.als('Prüfer (Nachbesserung)', null, 'aal1', 'postgres');
 
   -- Aufräumen, damit 03 bis 05 erneut laufen können (03 prüft den Bestand an Berichten und Speicherobjekten)
   delete from storage.objects where name in (k1 || '/von-uns/versteckt.pdf', k1 || '/von-uns/versteckt2.pdf', k1 || '/von-uns/richtung.pdf',
