@@ -1,191 +1,395 @@
-"""Montagsbrief (Wochenstand) als schlichte HTML-Seite für das Kundenportal.
-Gleiche Inhalte wie build_wochenstand.py, ohne Verschlüsselung und ohne eigenes Rückmeldeformular:
-Kommentare laufen im Portal. Läuft ohne JavaScript (das Portal zeigt Berichte ohne Skripte).
-Aufruf: python3 wochenstand_portal.py daten.json ausgabe.html [Kundenname]"""
-import os, sys, json, html
+"""Montagsbrief fürs Kundenportal (Weg 1: ohne Aufklappen, Tiefe als zweite Seite).
+
+Aufruf: python3 wochenstand_portal.py <daten.json> <ausgabeordner> [Kundenname] [--eigenstaendig]
+
+Schreibt in den Ausgabeordner:
+  seite1.html          Das Wichtigste der Woche, Zum Handeln, die übrigen Bereiche
+  alle_werte.html      alle Werte und Tabellen nach Bereichen
+  zusammenfassung.txt  höchstens drei Sätze, ein Satz je Zeile (Übersicht im Portal)
+
+Beide Seiten ohne JavaScript, ohne <details>, ohne eigenen Kopf, Logo und Fußzeile:
+den Kopf stellt das Portal. Schriften sind eingebettet. Mit --eigenstaendig verlinken
+sich die Seiten gegenseitig (zum Ansehen außerhalb des Portals); im Portal läuft die
+Verbindung über das Portal, weil der Bericht dort per srcdoc im iframe steht.
+
+Optionale Felder in den Daten:
+  vorlaeufig: true                      -> Hinweis, dass die Sonntagswerte vorläufig sind
+  zusammenfassung.saetze: [..]          -> fertige Sätze für oben (sonst die ersten drei aus .gesamt)
+  zusammenfassung.schritte: {Bereich: ..} -> nächster Schritt je Bereich unter „Zum Handeln“
+  kennzahlen[].ziel_quelle: "amazon"|"vorschlag", kennzahlen[].vorschlag: Text
+"""
+import os, re, sys, json, html
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import theme as T
+
 e = html.escape
-SRC, OUTF = sys.argv[1], sys.argv[2]
-D = json.load(open(SRC)); KUNDE = sys.argv[3] if len(sys.argv) > 3 else D["konto"]
-BEREICHE = ["Fristen", "Konto", "Katalog", "Verkauf", "Werbung", "Lager", "Marke", "Zahlungen"]
-TITEL = {"Konto": "Konto und Verkäuferleistung", "Verkauf": "Verkauf und Besucher", "Werbung": "Werbung", "Lager": "Lager und FBA",
-         "Katalog": "Katalog und Angebote", "Marke": "Marke und Markt", "Zahlungen": "Zahlungen und Gebühren", "Fristen": "Fristen und Aktionen"}
+
+# ---------------------------------------------------------------- Wörter
+# Wörterliste aus kundenportal/inhalte.md: Begriffe aus Seller Central und Werbekonsole,
+# die im Kundentext ersetzt werden. Reihenfolge zählt (längere Begriffe zuerst).
+WOERTER = [
+    (r"Bewertung der Verkäuferleistung", "Kontozustand"),
+    (r"Bestellungen \(Bestellposten\)", "Bestellungen"),
+    (r"Conversion \(Einheiten pro Sitzung\)", "Verkaufte Packungen je 100 Besuche"),
+    (r"\bTACoS\b", "Werbekosten am Umsatz"),
+    (r"\bACoS\b", "Werbekosten am Werbeumsatz"),
+    (r"\bROAS\b", "Werbeumsatz je Werbe-Euro"),
+    (r"\bCTR\b", "Klickrate"),
+    (r"\bCPC\b", "Kosten je Klick"),
+    (r"\bSitzungen\b", "Besuche"),
+    (r"\bSitzung\b", "Besuch"),
+    (r"\bEinheiten\b", "Packungen"),
+    (r"\bEinheit\b", "Packung"),
+    (r"\bEinh\.", "Packungen"),
+    (r"\bSKUs\b", "Artikel"),
+    (r"\bSKU\b", "Artikel"),
+    (r"\s*\(LBI\)", ""),
+    (r"\bN/A\b", "nicht angezeigt"),
+    (r"„Füllen Sie (\d+) Artikel noch heute auf“", r"Amazon empfiehlt, \1 Artikel sofort aufzufüllen"),
+]
+# Kennzahlen, die im Kundentext nicht erscheinen.
+WEGLASSEN = {"ROAS"}
+# Amazons Hochrechnungen zu verlorenen Verkäufen stehen nie im Kundentext.
+VERBOTEN = re.compile(r"gefährdete[nr]? (Verk(ä|a)uf|Umsatz)|entgangene[nr]? Verk(ä|a)uf", re.I)
+
+
+def wort(s):
+    s = "" if s is None else str(s)
+    for a, b in WOERTER:
+        s = re.sub(a, b, s)
+    return s
+
+
+def ohne_hochrechnung(s):
+    """Entfernt Teile, die Amazons Hochrechnung zu gefährdeten oder entgangenen Verkäufen nennen."""
+    if not s or not VERBOTEN.search(s):
+        return s
+    s = re.sub(r"\s*\([^()]*\)", lambda m: "" if VERBOTEN.search(m.group(0)) else m.group(0), s)
+    for trenn in (" · ", "; ", ", "):
+        teile = s.split(trenn)
+        s = trenn.join(t for t in teile if not VERBOTEN.search(t))
+    return "" if VERBOTEN.search(s) else s.strip(" ;,·")
+
+
+def txt(s):
+    return ohne_hochrechnung(wort(s))
+
+
+# ---------------------------------------------------------------- Daten
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+if len(ARGS) < 2:
+    sys.exit(__doc__)
+SRC, OUTD = ARGS[0], ARGS[1]
+EIGEN = "--eigenstaendig" in sys.argv
+D = json.load(open(SRC, encoding="utf-8"))
+KUNDE = ARGS[2] if len(ARGS) > 2 else D.get("konto", "")
+
+BEREICHE = ["Konto", "Katalog", "Verkauf", "Werbung", "Lager", "Marke", "Zahlungen", "Fristen"]
+TITEL = {"Konto": "Konto und Verkäuferleistung", "Verkauf": "Verkauf und Besuche", "Werbung": "Werbung", "Lager": "Lager und Versand durch Amazon",
+         "Katalog": "Katalog und Angebote", "Marke": "Marke und Markt", "Zahlungen": "Zahlungen und Gebühren", "Fristen": "Fristen"}
 RANG = {"r": 3, "y": 2, "g": 1, "": 0}
 STATUS = {"r": "Handeln", "y": "Beobachten", "g": "Im Ziel", "": "Ohne Zielwert"}
-SR = {"g": "im Ziel", "y": "beobachten", "r": "handeln", "": ""}
-d = lambda iso: f"{iso[8:10]}.{iso[5:7]}.{iso[0:4]}" if iso and len(iso) >= 10 else (iso or "")
-eur = lambda x: T.fmt(x, 0 if abs(x) >= 100 else 2) + " €" if isinstance(x, (int, float)) else e(str(x))
-pct = lambda x: T.fmt(x, 1 if x < 10 else 0) + " %" if isinstance(x, (int, float)) else e(str(x))
-KZ = D.get("kennzahlen", []); groups = {b: [k for k in KZ if k.get("bereich") == b] for b in BEREICHE}
-worst = lambda ks: max((k.get("ampel", "") for k in ks), key=lambda a: RANG[a], default="")
-ZF = D.get("zusammenfassung", {})
 
-def glance():
-    tiles = ""
-    for b in BEREICHE:
-        ks = groups[b]
-        if not ks: continue
-        w = worst(ks); lead = next((k for k in ks if k.get("leit")), ks[0])
-        n_r = sum(1 for k in ks if k.get("ampel") == "r"); n_y = sum(1 for k in ks if k.get("ampel") == "y")
-        cnt = " · ".join(x for x in [f"{n_r} handeln" if n_r else "", f"{n_y} beobachten" if n_y else ""] if x)
-        tiles += (f'<div class="tile t-{w or "n"}"><span class="tb">{e(b)}</span><span class="tv">{e(lead.get("kachel") or lead["wert"])}</span>'
-                  f'<span class="tl">{e(lead.get("kachel_name") or lead["name"])}</span><span class="ts">{cnt or STATUS[w]}</span></div>')
-    return f'<section class="wrap" aria-label="Auf einen Blick"><div class="glance">{tiles}</div></section>'
+KZ = [k for k in (D.get("kennzahlen") or []) if isinstance(k, dict)]
+for k in KZ:
+    if k.get("ampel") not in RANG:
+        k["ampel"] = ""
+alle_b = BEREICHE + [b for b in dict.fromkeys(k.get("bereich") for k in KZ) if b and b not in BEREICHE]
+GRUPPEN = {b: [k for k in KZ if k.get("bereich") == b] for b in alle_b}
+schlimmste = lambda ks: max((k["ampel"] for k in ks), key=lambda a: RANG[a], default="")
+ZF = D.get("zusammenfassung") or {}
+SCHRITTE = ZF.get("schritte") or D.get("naechster_schritt") or {}
+W = D.get("woche") or {}
+VW, VJ = D.get("vorwoche") or {}, D.get("vorjahr") or {}
 
-def rows(ks):
+dat = lambda iso: f"{iso[8:10]}.{iso[5:7]}.{iso[0:4]}" if iso and len(iso) >= 10 else (iso or "")
+dat_kurz = lambda iso: f"{iso[8:10]}.{iso[5:7]}." if iso and len(iso) >= 10 else (iso or "")
+num = lambda x: x if isinstance(x, (int, float)) else None
+eur = lambda x: (T.fmt(x, 0 if abs(x) >= 100 else 2) + " €") if num(x) is not None else e(str(x or ""))
+pct = lambda x: (T.fmt(x, 1 if abs(x) < 10 else 0) + " %") if num(x) is not None else e(str(x or ""))
+ganz = lambda x: T.fmt(x) if num(x) is not None else e(str(x or ""))
+zeitraum = f'{dat(W.get("von"))} bis {dat(W.get("bis"))}' if W.get("von") else ""
+
+
+def saetze():
+    s = ZF.get("saetze") or (ZF.get("gesamt") or [])
+    out = []
+    for x in s:
+        x = txt(x).strip()
+        if x:
+            out.append(x)
+    return out[:3]
+
+
+def bereich_satz(b):
+    s = ZF.get(b)
+    if isinstance(s, list):
+        s = " ".join(s)
+    s = txt(s or "").strip()
+    if s:
+        return s
+    ks = GRUPPEN.get(b) or []
+    lead = next((k for k in ks if k.get("leit")), ks[0] if ks else None)
+    return f'{txt(lead.get("kachel_name") or lead.get("name"))}: {txt(lead.get("wert"))}.' if lead else ""
+
+
+# ---------------------------------------------------------------- Bausteine
+def marke(a):
+    return f'<span class="m m-{a or "n"}" aria-hidden="true"></span>'
+
+
+def status_wort(a):
+    return f'<span class="st st-{a or "n"}">{STATUS[a]}</span>'
+
+
+def ziel_text(k):
+    """Ziel mit Herkunft. Ohne Amazon-Grenzwert ist die Ampel unser Vorschlag."""
+    a, ziel, quelle = k["ampel"], txt(k.get("ziel")).strip(), k.get("ziel_quelle")
+    vorschlag = txt(k.get("vorschlag")).strip()
+    if quelle == "vorschlag" or (a and not ziel):
+        return f"Unser Vorschlag: {vorschlag}" if vorschlag else ("Ampel nach unserem Vorschlag, Amazon nennt keinen Grenzwert" if a else "")
+    if ziel and not ziel.lower().startswith("kein"):
+        return f"Grenze laut Amazon: {ziel}"
+    return ziel
+
+
+def werte(ks):
     out = ""
     for k in ks:
-        a = k.get("ampel", ""); ziel = f' · Ziel {e(k["ziel"])}' if k.get("ziel") else ""
-        flag = f'<span class="kflag f-{a}">{SR[a]}</span>' if a in ("r", "y") else ""
-        out += (f'<li class="krow"><span class="dot d-{a or "n"}" title="{SR[a] or "ohne Zielwert"}"></span><span class="kleft"><span class="kname">{e(k["name"])}</span>'
-                f'<span class="kcmp">{e(k.get("vergleich", ""))}{ziel}</span></span><span class="kval{" long" if len(k["wert"]) > 14 else ""}">{e(k["wert"])}{flag}</span></li>')
-    return f'<ul class="klist">{out}</ul>'
+        a = k["ampel"]
+        unter = " · ".join(x for x in [e(txt(k.get("vergleich"))), e(ziel_text(k))] if x)
+        wert = txt(k.get("wert"))
+        lang = " lang" if len(wert) > 16 else ""
+        st = f'<span class="wst">{status_wort(a)}</span>' if a in ("r", "y") else ""
+        out += (f'<li class="w">{marke(a)}<div class="wl"><div class="wn">{e(txt(k.get("name")))}</div>'
+                f'{f"<div class=wu>{unter}</div>" if unter else ""}</div>'
+                f'<div class="wv{lang}">{e(wert)}{st}</div></li>')
+    return f'<ul class="werte">{out}</ul>' if out else ""
 
-def tab(head, body, cls=""):
-    th = "".join(f'<th class="{c}">{e(h)}</th>' for h, c in head)
-    return f'<div class="tw"><table class="dt {cls}"><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>'
 
-def art_top():
+def tabelle(kopf, zeilen, note=""):
+    """Breite Tabelle am Laptop, am Handy Liste untereinander (data-label)."""
+    th = "".join(f'<th class="{c}" scope="col">{e(h)}</th>' for h, c in kopf)
+    body = ""
+    for z in zeilen:
+        cls = z.get("cls", "")
+        tds = ""
+        for (h, c), v in zip(kopf, z["zellen"]):
+            tds += f'<td class="{c}" data-label="{e(h)}">{v}</td>'
+        body += f'<tr class="{cls}">{tds}</tr>'
+    n = f'<p class="note">{e(note)}</p>' if note else ""
+    return f'<table class="tab"><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>{n}'
+
+
+def artikel(x):
+    asin = f'<span class="asin">{e(str(x.get("asin", "")))}</span>' if x.get("asin") else ""
+    return f'<span class="ti">{e(txt(x.get("titel")))}</span>{asin}'
+
+
+def tab_artikel():
     a = D.get("artikel_top") or []
-    if not a: return ""
-    body = "".join(f'<tr><td class="ti">{e(x["titel"])}<span class="asin">{e(x["asin"])}</span></td><td class="r">{eur(x["umsatz"])}</td><td class="r">{x["einheiten"]}</td>'
-                   f'<td class="r">{x["sitzungen"]}</td><td class="r">{pct(x["conversion"])}</td><td class="r">{pct(x["buybox"])}</td></tr>' for x in a)
-    return '<h3 class="sub">Top 10 Artikel nach Umsatz</h3>' + tab([("Artikel", ""), ("Umsatz", "r"), ("Einh.", "r"), ("Sitzungen", "r"), ("Conversion", "r"), ("Buy Box", "r")], body)
+    if not a:
+        return ""
+    z = [{"zellen": [artikel(x), eur(x.get("umsatz")), ganz(x.get("einheiten")), ganz(x.get("sitzungen", x.get("besuche"))),
+                     pct(x.get("conversion")), pct(x.get("buybox"))]} for x in a]
+    return '<h3>Die zehn Artikel mit dem meisten Umsatz</h3>' + tabelle(
+        [("Artikel", "t"), ("Umsatz", "r"), ("Einheiten", "r"), ("Besuche", "r"), ("Conversion", "r"), ("Buy Box", "r")], z,
+        "Conversion: verkaufte Einheiten je Besuch. Buy Box: Anteil der Besuche, in denen euer Angebot vorne stand.")
 
-def movers():
-    g, v = D.get("gewinner") or [], D.get("verlierer") or []
-    if not g and not v: return ""
-    def li(xs, sign):
-        out = ""
-        for x in xs:
-            u, p = x.get("umsatz", 0) or 0, x.get("vorwoche", 0) or 0; diff = u - p
-            out += f'<li><span class="mt">{e(x["titel"])}</span><span class="mv {sign}">{"+" if diff >= 0 else "−"}{eur(abs(diff))}</span><span class="mc">{eur(p)} → {eur(u)}</span></li>'
-        return out
-    return f'<div class="mov"><div><h3 class="sub">Gewinner zur Vorwoche</h3><ul class="ml">{li(g, "up")}</ul></div><div><h3 class="sub">Verlierer zur Vorwoche</h3><ul class="ml">{li(v, "dn")}</ul></div></div>'
 
-def reichweite():
-    r = D.get("reichweite") or []
-    if not r: return ""
-    cls = lambda w: "k-r" if w < 2 else ("k-y" if w < 4 else "")
-    body = "".join(f'<tr class="{cls(x["wochen"])}"><td class="ti">{e(x["titel"])}<span class="asin">{e(x["asin"])}</span></td><td class="r">{x["bestand"]}</td>'
-                   f'<td class="r">{x["einheiten_woche"]}</td><td class="r b">{T.fmt(x["wochen"], 1)}</td></tr>' for x in r)
-    return ('<h3 class="sub">Reichweite der Top-Artikel (FBA)</h3>' + tab([("Artikel", ""), ("Bestand", "r"), ("Verkauft/Woche", "r"), ("Wochen", "r")], body) +
-            '<p class="note">Rot unter 2 Wochen. Gerechnet: Bestand geteilt durch verkaufte Einheiten der Woche.</p>')
-
-def suchbegriffe():
-    s = D.get("suchbegriffe") or []
-    if not s: return ""
-    body = "".join(f'<tr><td class="ti">{e(x["begriff"])}</td><td class="r">{T.fmt(x["volumen"])}</td><td class="r">{pct(x["impr_anteil"])}</td>'
-                   f'<td class="r">{pct(x["klick_anteil"])}</td><td class="r b">{pct(x["kauf_anteil"])}</td></tr>' for x in s)
-    return '<h3 class="sub">Suchbegriffe: euer Anteil</h3>' + tab([("Suchbegriff", ""), ("Suchvolumen", "r"), ("Impressionen", "r"), ("Klicks", "r"), ("Käufe", "r")], body)
-
-def fristen():
-    f = sorted(D.get("fristen") or [], key=lambda x: x.get("datum", "")); h = D.get("hinweise") or []
-    out = '<div class="fgrid">'
-    if f:
-        out += '<div><h3 class="sub">Termine</h3><ul class="fl">' + "".join(f'<li><span class="fd">{e(d(x["datum"]))}</span><span class="fw">{e(x["was"])}</span><span class="fb">{e(x.get("betrag", ""))}</span></li>' for x in f) + "</ul></div>"
-    if h:
-        out += '<div><h3 class="sub">Hinweise von Amazon</h3><ul class="hl">' + "".join(f"<li>{e(x)}</li>" for x in h) + "</ul></div>"
-    return out + "</div>"
-
-EXTRA = {"Verkauf": art_top, "Lager": reichweite, "Marke": suchbegriffe}
-SICHTBAR = {"Verkauf": movers, "Fristen": fristen}
-
-def sections():
+def tab_bewegung():
     out = ""
-    for b in sorted(BEREICHE, key=lambda b: -RANG[worst(groups[b])]):
-        ks = groups[b]; extra = EXTRA.get(b, lambda: "")(); shown = SICHTBAR.get(b, lambda: "")()
-        if not ks and not extra and not shown: continue
-        w = worst(ks)
-        n_r = sum(1 for k in ks if k.get("ampel") == "r"); n_y = sum(1 for k in ks if k.get("ampel") == "y")
-        stat = " · ".join(x for x in [f"{n_r} handeln" if n_r else "", f"{n_y} beobachten" if n_y else ""] if x) or (STATUS[w] if ks else "")
-        body_rows = sorted(ks, key=lambda k: (not k.get("leit"), -RANG[k.get("ampel", "")], ks.index(k)))
-        if b == "Fristen" and shown: body_rows = []
-        hb = (D.get("hinweise_bereich") or {}).get(b) or []
-        auf = ('<h3 class="sub">Aufgefallen</h3><ul class="hl">' + "".join(f"<li>{e(x)}</li>" for x in hb) + "</ul>") if hb else ""
-        detail = ((f'<h3 class="sub">Alle {len(body_rows)} Werte</h3>' + rows(body_rows)) if body_rows else "") + shown + auf + extra
-        out += (f'<details class="area a-{w or "n"}" id="b-{b}"><summary><span class="dot d-{w or "n"}"></span><span class="at"><span class="an">{e(TITEL[b])}</span>'
-                f'<span class="ak">{e(ZF.get(b, ""))}</span></span><span class="as s-{w or "n"}">{e(stat)}</span><span class="chev" aria-hidden="true"></span></summary><div class="ad">{detail}</div></details>')
-    return f'<div class="atools"><h2 class="ah">Die Bereiche</h2><span class="hint">Zum Aufklappen auf einen Bereich tippen</span></div><div class="areas">{out}</div>'
+    for key, titel in (("gewinner", "Mehr Umsatz als in der Vorwoche"), ("verlierer", "Weniger Umsatz als in der Vorwoche")):
+        xs = D.get(key) or []
+        if not xs:
+            continue
+        z = []
+        for x in xs:
+            u, p = num(x.get("umsatz")) or 0, num(x.get("vorwoche")) or 0
+            diff = u - p
+            z.append({"zellen": [artikel(x), eur(p), eur(u), ("+" if diff >= 0 else "−") + eur(abs(diff))], "cls": "dn" if diff < 0 else ""})
+        out += f"<h3>{titel}</h3>" + tabelle([("Artikel", "t"), ("Vorwoche", "r"), ("Diese Woche", "r"), ("Unterschied", "r b")], z)
+    return out
 
-def wichtigstes():
-    g = ZF.get("gesamt") or []
-    return f'<div class="key"><h2>Das Wichtigste der Woche</h2><ul>{"".join(f"<li>{e(x)}</li>" for x in g)}</ul></div>' if g else ""
 
-def luecken():
-    l = D.get("luecken") or []
-    if not l: return ""
-    return f'<details class="gaps"><summary>Was diese Woche fehlt ({len(l)})</summary><ul>{"".join(f"<li><b>{e(x["was"])}</b> {e(x["warum"])}</li>" for x in l)}</ul></details>'
+def tab_reichweite():
+    r = D.get("reichweite") or []
+    if not r:
+        return ""
+    def cls(w):
+        w = num(w)
+        return "" if w is None else ("kr" if w < 2 else "")
+    z = [{"zellen": [artikel(x), ganz(x.get("bestand")), ganz(x.get("einheiten_woche")),
+                     T.fmt(x["wochen"], 1) if num(x.get("wochen")) is not None else e(str(x.get("wochen", "")))], "cls": cls(x.get("wochen"))} for x in r]
+    return '<h3>Wie lange der Bestand der Top-Artikel reicht</h3>' + tabelle(
+        [("Artikel", "t"), ("Bestand", "r"), ("Verkauft je Woche", "r"), ("Reicht Wochen", "r b")], z,
+        "Gerechnet: Bestand geteilt durch die verkauften Einheiten der Woche. Rot heißt: reicht weniger als zwei Wochen (unser Vorschlag).")
 
-W, VW, VJ = D["woche"], D.get("vorwoche", {}), D.get("vorjahr", {})
-zeitraum = f'{d(W["von"])} bis {d(W["bis"])}'
-quelle = (f'Quelle: Seller Central {D.get("marktplatz", "DE")}, Konto {D["konto"]}, abgerufen am {d(D.get("abgerufen", ""))}. Woche {zeitraum}'
-          + (f', Vorwoche {d(VW.get("von"))} bis {d(VW.get("bis"))}' if VW else "") + (f', Vorjahr {d(VJ.get("von"))} bis {d(VJ.get("bis"))}' if VJ else "")
-          + '. Rollierende Amazon-Kennzahlen mit dem Zeitraum, den Amazon anzeigt. Gerechnete Werte sind aus den Amazon-Zahlen abgeleitet.')
-legend = '<p class="klegend"><span><span class="dot d-r"></span>handeln</span><span><span class="dot d-y"></span>beobachten</span><span><span class="dot d-g"></span>im Ziel</span><span><span class="dot d-n"></span>ohne Zielwert</span></p>'
-n_r = sum(1 for k in KZ if k.get("ampel") == "r"); n_y = sum(1 for k in KZ if k.get("ampel") == "y")
-h1 = f'{n_r} {"Wert" if n_r == 1 else "Werte"} zum Handeln, {n_y} zum Beobachten.' if (n_r or n_y) else "Alle Werte im Ziel."
 
-CONTENT = f"""<header class="hero"><div class="wrap"><div class="htop"><div class="logo" aria-label="PPotthoff">{T.LOGO_NEG}</div>
-<div class="kicker">Montagsbrief · {e(W["kw"])} · {e(KUNDE)} auf Amazon · Woche vom {e(zeitraum)}</div></div>
-<div class="hgrid"><div><h1>{e(h1)}</h1></div>{wichtigstes()}</div></div></header>
-{glance()}<main class="wrap">{sections()}{legend}{luecken()}<p class="src">{e(quelle)}</p></main>
-<footer class="foot wrap"><span>PPotthoff · Montagsbrief {e(W["kw"])} · {e(KUNDE)}</span><span>Fragen und Anmerkungen gern unten in den Kommentaren.</span></footer>"""
+def tab_suche():
+    s = D.get("suchbegriffe") or []
+    if not s:
+        return ""
+    z = [{"zellen": [e(txt(x.get("begriff"))), ganz(x.get("volumen")), pct(x.get("impr_anteil")), pct(x.get("klick_anteil")), pct(x.get("kauf_anteil"))]} for x in s]
+    return '<h3>Suchbegriffe: euer Anteil</h3>' + tabelle(
+        [("Suchbegriff", "t"), ("Suchanfragen", "r"), ("Anteil Anzeigen", "r"), ("Anteil Klicks", "r"), ("Anteil Käufe", "r b")], z,
+        "Anteil: wie viel von allen Einblendungen, Klicks und Käufen zu diesem Suchbegriff auf eure Artikel fiel.")
 
-CSS = T.FONTS + f""":root{{--surface:{T.SURFACE};--surface2:{T.SURFACE2};--paper:{T.PAPER};--ink:{T.INK};--ink-soft:{T.INK_SOFT};--green:{T.GREEN};--on-green:{T.ON_GREEN};--green-soft:{T.GREEN_SOFT};--rule:{T.RULE};--critical:{T.CRITICAL};--display:Newsreader,Georgia,serif;--sans:"Schibsted Grotesk",Arial,sans-serif}}
-*{{box-sizing:border-box;border-radius:0}} html,body{{margin:0;background:var(--surface);color:var(--ink)}}
-body{{font-family:var(--sans);font-size:15.5px;line-height:1.5;-webkit-font-smoothing:antialiased}} a{{color:var(--green)}}
-.wrap{{max-width:1240px;margin:0 auto;padding:0 32px}}
-.hero{{background:var(--green);color:var(--on-green);padding:22px 0 30px}} .htop{{display:flex;align-items:center;gap:24px;flex-wrap:wrap}}
-.logo svg{{height:24px;width:auto;display:block}} .kicker{{font-size:13px;color:var(--green-soft)}}
-.hgrid{{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:40px;margin-top:22px;align-items:start}}
-h1{{font-family:var(--display);font-weight:300;font-size:clamp(28px,3.4vw,40px);line-height:1.12;letter-spacing:-.5px;margin:0}}
-.key{{border-left:1px solid rgba(245,240,230,.25);padding-left:32px}} .key h2{{font-size:13px;font-weight:600;color:var(--green-soft);margin:0 0 8px}}
-.key ul{{margin:0;padding-left:18px;font-size:16px}} .key li{{margin-bottom:6px}}
-.glance{{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));background:var(--paper);border:1px solid var(--rule);border-top:0}}
-.tile{{display:flex;flex-direction:column;gap:1px;padding:12px 14px 14px;text-decoration:none;color:var(--ink);border-top:4px solid var(--rule);border-right:1px solid var(--rule)}}
-.tile:last-child{{border-right:0}} .t-g{{border-top-color:var(--green-soft)}} .t-y{{border-top-color:var(--ink)}} .t-r{{border-top-color:var(--critical)}}
-.tb{{font-size:12px;color:var(--ink-soft);font-weight:600}} .tv{{font-family:var(--display);font-size:24px;line-height:1.15;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.tl{{font-size:12px;color:var(--ink-soft);line-height:1.3}} .ts{{font-size:12px;font-weight:600;margin-top:6px}} .t-r .ts{{color:var(--critical)}}
-.klegend{{font-size:12.5px;color:var(--ink-soft);margin:18px 0 14px;display:flex;flex-wrap:wrap;gap:4px 16px}}
-.dot{{display:inline-block;width:10px;height:10px;flex:none;margin-right:6px;vertical-align:-1px}}
-.d-r{{background:var(--critical)}} .d-y{{background:var(--ink)}} .d-g{{background:var(--green-soft)}} .d-n{{border:1px solid var(--ink-soft)}}
-.atools{{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:28px 0 10px;flex-wrap:wrap}} .ah{{font-family:var(--display);font-weight:400;font-size:24px;color:var(--green);margin:0}}
-.hint{{font-size:13px;color:var(--ink-soft)}}
-.areas{{background:var(--paper);border:1px solid var(--rule)}} .area{{border-top:1px solid var(--rule)}} .area:first-child{{border-top:0}}
-.area>summary{{list-style:none;cursor:pointer;display:grid;grid-template-columns:auto minmax(0,1fr) 190px 20px;column-gap:20px;align-items:center;padding:16px 22px}}
-.area>summary::-webkit-details-marker{{display:none}} .area>summary:hover{{background:var(--surface)}} .area[open]>summary{{background:var(--surface2)}}
-.area>summary .dot{{width:12px;height:12px;margin:0}} .at{{display:flex;flex-direction:column;min-width:0}}
-.an{{font-family:var(--display);font-size:20px;line-height:1.2;color:var(--green)}} .ak{{font-size:14.5px;margin-top:2px}}
-.as{{font-size:13px;font-weight:600;text-align:right}} .as.s-g,.as.s-n{{color:var(--ink-soft);font-weight:400}} .s-r{{color:var(--critical)}}
-.chev{{width:10px;height:10px;border-right:2px solid var(--green);border-bottom:2px solid var(--green);transform:rotate(45deg);margin-top:-6px;justify-self:end}}
-.area[open] .chev{{transform:rotate(225deg);margin-top:4px}}
-.ad{{padding:4px 22px 22px 54px;border-top:1px solid var(--rule)}} .ad>.klist{{display:grid;grid-template-columns:1fr 1fr;column-gap:48px}}
-.fgrid{{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:40px}}
-.klist{{list-style:none;margin:0;padding:0}} .krow{{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:4px;align-items:start;padding:10px 0;border-bottom:1px solid var(--rule)}}
-.krow .dot{{margin-top:5px;margin-right:8px}} .kleft{{display:flex;flex-direction:column;min-width:0}} .kname{{font-weight:600;font-size:15px}}
-.kcmp{{font-size:13px;color:var(--ink-soft);line-height:1.4}} .kval{{font-family:var(--display);font-size:21px;line-height:1.15;text-align:right;white-space:nowrap;padding-left:16px}}
-.kval.long{{white-space:normal;font-family:var(--sans);font-size:14px;font-weight:600;max-width:220px}} .kflag{{display:block;font-family:var(--sans);font-size:12px;font-weight:600;margin-top:2px}}
-.f-r{{color:var(--critical)}} h3.sub{{font-size:13px;color:var(--ink-soft);font-weight:600;margin:20px 0 6px}}
-.tw{{overflow-x:auto}} .dt{{width:100%;border-collapse:collapse;font-size:14px}}
-.dt th{{text-align:left;font-size:12px;color:var(--ink-soft);font-weight:600;padding:0 12px 6px 0;border-bottom:1px solid var(--ink-soft);white-space:nowrap}}
-.dt td{{padding:8px 12px 8px 0;border-bottom:1px solid var(--rule);vertical-align:top}} .dt .r{{text-align:right;white-space:nowrap}} .dt .b{{font-weight:600}}
-.dt .ti{{min-width:180px}} .asin{{display:block;font-size:12px;color:var(--ink-soft)}} .dt tr.k-r td:last-child{{color:var(--critical)}}
-.note{{font-size:12.5px;color:var(--ink-soft);margin:6px 0 4px}}
-.mov{{display:grid;grid-template-columns:1fr 1fr;gap:28px;border-top:1px solid var(--rule);margin-top:4px}} .ml{{list-style:none;margin:0;padding:0}}
-.ml li{{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;padding:8px 0;border-bottom:1px solid var(--rule);font-size:14px}}
-.mt{{font-weight:600}} .mv{{font-family:var(--display);font-size:19px;text-align:right}} .mv.dn{{color:var(--critical)}} .mc{{grid-column:1/-1;font-size:12.5px;color:var(--ink-soft)}}
-.fl,.hl{{list-style:none;margin:0;padding:0}} .fl li{{display:grid;grid-template-columns:96px minmax(0,1fr) auto;column-gap:12px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:14.5px}}
-.fd{{font-weight:600}} .fb{{text-align:right;white-space:nowrap}} .hl li{{padding:8px 0;border-bottom:1px solid var(--rule);font-size:14px}}
-.gaps{{margin-top:28px;font-size:14px}} .gaps summary{{cursor:pointer;color:var(--ink-soft);text-decoration:underline}} .gaps li{{margin:6px 0}}
-.src{{font-size:12px;color:var(--ink-soft);margin-top:20px;max-width:900px}}
-.foot{{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-top:1px solid var(--rule);margin-top:28px;padding-top:14px;padding-bottom:28px;font-size:12.5px;color:var(--ink-soft)}}
-@media (max-width:1100px){{ .glance{{grid-template-columns:repeat(4,minmax(0,1fr))}} .tile:nth-child(4n){{border-right:0}} }}
-@media (max-width:900px){{ .ad>.klist,.fgrid{{grid-template-columns:1fr;gap:0}} .area>summary{{grid-template-columns:auto minmax(0,1fr) 150px 20px}} .hgrid{{grid-template-columns:1fr;gap:20px}} .key{{border-left:0;padding-left:0}} }}
-@media (max-width:640px){{ .wrap{{padding:0 16px}} .glance{{grid-template-columns:1fr 1fr}} .tile:nth-child(2n){{border-right:0}}
- .area>summary{{grid-template-columns:auto minmax(0,1fr) 20px;padding:14px 16px;column-gap:12px;align-items:start}} .area>summary .dot{{grid-column:1;grid-row:1;margin-top:6px}} .at{{grid-column:2;grid-row:1}} .chev{{grid-column:3;grid-row:1;margin-top:6px}} .as{{grid-column:2;grid-row:2;text-align:left;margin-top:6px}} .ad{{padding:4px 16px 18px}}
- .mov{{grid-template-columns:1fr;gap:0}} .fl li{{grid-template-columns:84px minmax(0,1fr)}} .fb{{grid-column:2;text-align:left}} }}"""
 
-open(OUTF, "w").write(f'<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Montagsbrief {e(W["kw"])} · {e(KUNDE)}</title><style>{CSS}</style></head><body>{CONTENT}</body></html>')
-print(OUTF, os.path.getsize(OUTF))
+def tab_fristen():
+    f = sorted([x for x in (D.get("fristen") or []) if isinstance(x, dict)], key=lambda x: x.get("datum", ""))
+    if not f:
+        return ""
+    z = [{"zellen": [f'<b>{e(dat(x.get("datum")))}</b>', e(txt(x.get("was"))), e(txt(x.get("betrag")))]} for x in f]
+    return "<h3>Termine</h3>" + tabelle([("Datum", "t"), ("Was", "t"), ("Betrag", "r")], z)
+
+
+def liste(titel, xs):
+    xs = [txt(x) for x in xs if txt(x)]
+    return f'<h3>{titel}</h3><ul class="punkte">{"".join(f"<li>{e(x)}</li>" for x in xs)}</ul>' if xs else ""
+
+
+TABELLEN = {"Verkauf": [tab_bewegung, tab_artikel], "Lager": [tab_reichweite], "Marke": [tab_suche], "Fristen": [tab_fristen]}
+
+# ---------------------------------------------------------------- Stil
+CSS = T.FONTS + f""":root{{--surface:{T.SURFACE};--paper:{T.PAPER};--ink:{T.INK};--soft:{T.INK_SOFT};--green:{T.GREEN};--green-soft:{T.GREEN_SOFT};--rule:{T.RULE};--crit:{T.CRITICAL};
+--serif:Newsreader,Georgia,serif;--sans:"Schibsted Grotesk",Arial,sans-serif}}
+*{{box-sizing:border-box}} html,body{{margin:0;background:var(--paper);color:var(--ink)}}
+body{{font:400 16px/1.55 var(--sans);-webkit-font-smoothing:antialiased;overflow-wrap:break-word}}
+a{{color:var(--green)}}
+.blatt{{max-width:880px;margin:0 auto;padding:32px 40px 36px}}
+.meta{{font-size:13px;color:var(--soft);margin:0 0 6px}}
+h2{{font-family:var(--serif);font-weight:400;font-size:26px;line-height:1.2;color:var(--green);margin:36px 0 12px}}
+h2:first-of-type{{margin-top:0}}
+h3{{font-size:13px;font-weight:600;color:var(--soft);margin:22px 0 6px}}
+.kurz{{font-family:var(--serif);font-weight:300;font-size:21px;line-height:1.45;margin:0}}
+.kurz p{{margin:0 0 10px}}
+.vorl{{font-size:14px;color:var(--soft);border-left:3px solid var(--rule);padding:2px 0 2px 12px;margin:14px 0 0}}
+.m{{display:inline-block;width:10px;height:10px;flex:none}}
+.m-r{{background:var(--crit)}} .m-y{{background:var(--ink)}} .m-g{{background:var(--green-soft)}} .m-n{{border:1px solid var(--soft)}}
+.st{{font-size:13px;font-weight:600;white-space:nowrap}} .st-r{{color:var(--crit)}} .st-g,.st-n{{color:var(--soft);font-weight:400}}
+.handeln{{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}}
+.handeln li{{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px;padding:16px 0;border-bottom:1px solid var(--rule)}}
+.handeln .m{{margin-top:9px}}
+.hb{{font-family:var(--serif);font-size:20px;line-height:1.25;color:var(--green)}}
+.hs{{margin-top:4px}} .hn{{margin-top:6px;font-size:15px}} .hn b{{font-weight:600}}
+.uebrig{{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}}
+.uebrig li{{display:grid;grid-template-columns:auto minmax(0,190px) minmax(0,1fr) auto;column-gap:14px;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--rule);font-size:15px}}
+.uebrig .ub{{font-weight:600}}
+.weiter{{margin-top:28px;font-size:14px;color:var(--soft)}}
+.bereich{{margin-top:44px}} .bereich:first-of-type{{margin-top:0}}
+.bk{{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid var(--ink);padding-bottom:6px;margin-bottom:4px}}
+.bk h2{{margin:0}} .bs{{margin:8px 0 0}}
+.werte{{list-style:none;margin:0;padding:0}}
+.w{{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:12px;padding:11px 0;border-bottom:1px solid var(--rule)}}
+.w .m{{margin-top:7px}} .wn{{font-weight:600;font-size:15px}} .wu{{font-size:13.5px;color:var(--soft);line-height:1.45}}
+.wv{{font-family:var(--serif);font-size:21px;line-height:1.2;text-align:right;white-space:nowrap;padding-left:12px}}
+.wv.lang{{white-space:normal;font-family:var(--sans);font-size:14px;font-weight:600;max-width:240px}}
+.wst{{display:block;font-family:var(--sans)}}
+.tab{{width:100%;border-collapse:collapse;font-size:14px}}
+.tab th{{text-align:left;font-size:12px;font-weight:600;color:var(--soft);padding:0 10px 6px 0;border-bottom:1px solid var(--soft);vertical-align:bottom}}
+.tab td{{padding:8px 10px 8px 0;border-bottom:1px solid var(--rule);vertical-align:top}}
+.tab .r{{text-align:right;white-space:nowrap}} .tab td.b{{font-weight:600}}
+.tab tr.kr td:last-child,.tab tr.dn td:last-child{{color:var(--crit)}}
+.ti{{display:block}} .asin{{display:block;font-size:12px;color:var(--soft)}}
+.note{{font-size:13px;color:var(--soft);margin:6px 0 0}}
+.punkte{{margin:0;padding-left:18px;font-size:15px}} .punkte li{{margin:4px 0}}
+.legende{{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:13px;color:var(--soft);margin-top:36px}}
+.legende span{{display:inline-flex;align-items:center;gap:6px}}
+.quelle{{font-size:12.5px;color:var(--soft);margin-top:14px}}
+@media (max-width:640px){{
+ .blatt{{padding:20px 16px 28px}}
+ h2{{font-size:23px;margin-top:30px}} .kurz{{font-size:19px}}
+ .uebrig li{{grid-template-columns:auto minmax(0,1fr) auto;row-gap:2px}}
+ .uebrig .us{{grid-column:2/4;grid-row:2;color:var(--soft);font-size:14px}}
+ .bk{{flex-wrap:wrap}}
+ .w{{grid-template-columns:auto minmax(0,1fr)}} .wv{{grid-column:2;text-align:left;padding:4px 0 0}} .wv.lang{{max-width:none}}
+ .tab thead{{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}}
+ .tab,.tab tbody,.tab tr,.tab td{{display:block;width:100%}}
+ .tab tr{{border-bottom:1px solid var(--rule);padding:8px 0}}
+ .tab td{{border:0;padding:2px 0;display:flex;justify-content:space-between;gap:12px;text-align:right}}
+ .tab td::before{{content:attr(data-label);color:var(--soft);font-size:13px;text-align:left;flex:none}}
+ .tab td.t:first-child{{display:block;text-align:left;padding-bottom:4px}} .tab td.t:first-child::before{{content:none}}
+ .tab td.t:not(:first-child){{text-align:right}}
+ .tab .r{{white-space:normal}}
+}}"""
+
+
+def seite(titel, inhalt):
+    return (f'<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{e(titel)}</title><style>{CSS}</style></head><body><main class="blatt">{inhalt}</main></body></html>')
+
+
+# ---------------------------------------------------------------- Seite 1
+def seite1():
+    s = saetze()
+    kopf = f'<p class="meta">Montagsbrief {e(W.get("kw", ""))} · {e(KUNDE)} auf Amazon · Woche vom {e(zeitraum)}</p>' if W else ""
+    teil = kopf + "<h2>Das Wichtigste der Woche</h2>"
+    teil += f'<div class="kurz">{"".join(f"<p>{e(x)}</p>" for x in s)}</div>' if s else '<p class="kurz">Für diese Woche liegt noch keine Zusammenfassung vor.</p>'
+    if D.get("vorlaeufig"):
+        teil += '<p class="vorl">Die Werte vom Sonntag sind noch vorläufig.</p>'
+    rot = [b for b in alle_b if GRUPPEN[b] and schlimmste(GRUPPEN[b]) == "r"]
+    rest = [b for b in alle_b if b not in rot and (GRUPPEN[b] or bereich_satz(b))]
+    if rot:
+        li = ""
+        for b in rot:
+            schritt = txt(SCHRITTE.get(b, "")).strip()
+            n = f'<div class="hn"><b>Nächster Schritt:</b> {e(schritt)}</div>' if schritt else ""
+            li += f'<li>{marke("r")}<div><div class="hb">{e(TITEL.get(b, b))}</div><div class="hs">{e(bereich_satz(b))}</div>{n}</div></li>'
+        teil += f'<h2>Zum Handeln</h2><ul class="handeln">{li}</ul>'
+    if rest:
+        rest.sort(key=lambda b: (-RANG[schlimmste(GRUPPEN[b])], alle_b.index(b)))
+        li = "".join(f'<li>{marke(schlimmste(GRUPPEN[b]))}<span class="ub">{e(TITEL.get(b, b))}</span><span class="us">{e(bereich_satz(b))}</span>'
+                     f'{status_wort(schlimmste(GRUPPEN[b]))}</li>' for b in rest)
+        teil += f'<h2>{"Die übrigen Bereiche" if rot else "Die Bereiche"}</h2><ul class="uebrig">{li}</ul>'
+    weiter = '<a href="alle_werte.html">Alle Werte und Tabellen</a>' if EIGEN else "Alle Werte und Tabellen"
+    teil += f'<p class="weiter">{weiter} stehen auf der zweiten Seite, nach Bereichen geordnet.</p>'
+    return seite(f'Montagsbrief {W.get("kw", "")} · {KUNDE}', teil)
+
+
+# ---------------------------------------------------------------- Alle Werte
+def alle_werte():
+    teil = (f'<p class="meta">Montagsbrief {e(W.get("kw", ""))} · {e(KUNDE)} · Alle Werte · Woche vom {e(zeitraum)}</p>' if W else "")
+    if EIGEN:
+        teil += '<p class="meta"><a href="seite1.html">Zurück zum Wichtigsten der Woche</a></p>'
+    if D.get("vorlaeufig"):
+        teil += '<p class="vorl">Die Werte vom Sonntag sind noch vorläufig.</p>'
+    hb = D.get("hinweise_bereich") or {}
+    for b in alle_b:
+        ks = GRUPPEN[b]
+        tabs = "".join(f() for f in TABELLEN.get(b, []))
+        auf = liste("Aufgefallen", hb.get(b) or [])
+        if b == "Fristen":
+            auf += liste("Hinweise von Amazon", D.get("hinweise") or [])
+        if not ks and not tabs and not auf:
+            continue
+        w = schlimmste(ks)
+        reihe = sorted(ks, key=lambda k: (-RANG[k["ampel"]], not k.get("leit"), ks.index(k)))
+        if b == "Fristen" and tabs:
+            reihe = []  # die Termine stehen vollständig in der Tabelle
+        stat = status_wort(w) if ks else ""
+        satz = bereich_satz(b)
+        teil += (f'<section class="bereich" id="b-{e(b)}"><div class="bk"><h2>{e(TITEL.get(b, b))}</h2>{stat}</div>'
+                 f'{f"<p class=bs>{e(satz)}</p>" if satz else ""}{werte(reihe)}{tabs}{auf}</section>')
+    l = [x for x in (D.get("luecken") or []) if isinstance(x, dict)]
+    if l:
+        teil += ('<section class="bereich"><div class="bk"><h2>Was diese Woche fehlt</h2></div><ul class="punkte">'
+                 + "".join(f'<li><b>{e(txt(x.get("was")))}</b>: {e(txt(x.get("warum")))}</li>' for x in l) + "</ul></section>")
+    teil += ('<p class="legende"><span>' + marke("r") + 'Handeln</span><span>' + marke("y") + 'Beobachten</span><span>' + marke("g")
+             + 'Im Ziel</span><span>' + marke("") + 'Ohne Zielwert</span></p>')
+    q = (f'Quelle: Seller Central {D.get("marktplatz", "DE")}, Konto {D.get("konto", KUNDE)}'
+         + (f', abgerufen am {dat(D.get("abgerufen", ""))}' if D.get("abgerufen") else "") + (f". Woche {zeitraum}" if zeitraum else "")
+         + (f', Vorwoche {dat(VW.get("von"))} bis {dat(VW.get("bis"))}' if VW.get("von") else "")
+         + (f', Vorjahr {dat(VJ.get("von"))} bis {dat(VJ.get("bis"))}' if VJ.get("von") else "")
+         + ". Rollierende Amazon-Kennzahlen mit dem Zeitraum, den Amazon anzeigt. Gerechnete Werte sind aus den Amazon-Zahlen abgeleitet."
+         + " Wo Amazon keinen Grenzwert nennt, ist die Ampel unser Vorschlag.")
+    teil += f'<p class="quelle">{e(q)}</p>'
+    return seite(f'Alle Werte {W.get("kw", "")} · {KUNDE}', teil)
+
+
+os.makedirs(OUTD, exist_ok=True)
+for name, inhalt in (("seite1.html", seite1()), ("alle_werte.html", alle_werte()), ("zusammenfassung.txt", "\n".join(saetze()) + "\n")):
+    p = os.path.join(OUTD, name)
+    open(p, "w", encoding="utf-8").write(inhalt)
+    print(p, os.path.getsize(p))

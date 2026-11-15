@@ -55,3 +55,5 @@ from (values ('11111111-1111-1111-1111-111111111111'::uuid), ('22222222-2222-222
 insert into storage.objects (bucket_id, name)
 select 'dateien', pfad from public.dateien where kunde_id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222')
 union all select 'berichte', html_pfad from public.berichte where kunde_id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
+-- Seit dem Umbau G3: Dateien vom Team sind erst nach bewusstem Schritt sichtbar. Die Testdateien gelten als sichtbar.
+update public.dateien set sichtbar = true;
