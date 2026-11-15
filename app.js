@@ -1,37 +1,60 @@
 /* Kundenportal PPotthoff
-   Kundensicht: Übersicht, Berichte, Entscheidungen, Aufgaben, Anliegen, Dateien, Roadmap, Werkzeuge; Kommentare an Berichten, Aufgaben und Anliegen.
-   Interner Bereich (nur Team mit Zwei-Faktor): Freigabe, Antworten, Anliegen, Dateien, Aufgaben, Roadmap, Werkzeuge, Zugänge, Protokoll.
-   Alle Zugriffsrechte liegen in der Datenbank (Zeilenregeln); die Oberfläche zeigt nur, was die Datenbank herausgibt. */
+   Kundensicht nach G1 bis G4: Übersicht, Berichte, Entscheidungen, Aufgaben, Anliegen, Dateien, Roadmap, Werkzeuge.
+   Interner Bereich (nur Team mit Zwei-Faktor): nicht gestaltet, übernimmt portal.css.
+   Alle Zugriffsrechte liegen in der Datenbank (Zeilenregeln); die Oberfläche zeigt nur, was die Datenbank herausgibt.
+   Teile, die die Migration vom 15.11. brauchen (S.g3), bleiben ohne sie unsichtbar. */
 (() => {
   "use strict";
   const C = window.PORTAL;
   const sb = window.supabase.createClient(C.url, C.key, { auth: { persistSession: true, storageKey: "ppotthoff-portal" } });
   const app = document.getElementById("app");
-  const S = { user: null, mitglied: null, kunde: null, kunden: [], aal: null, internKunde: null };
+  const S = { user: null, mitglied: null, kunde: null, kunden: [], internKunde: null, g3: false, mehr: { roadmap: 0, werkzeuge: 0 } };
+  const KONTAKT = "kontakt@patrickpotthoff.de";
 
   // ---------- Hilfen ----------
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const datum = (d) => (d ? new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
-  const zeit = (d) => (d ? new Date(d).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
+  const TZ = { timeZone: "Europe/Berlin" };
+  const datum = (d) => (d ? new Date(d).toLocaleDateString("de-DE", { ...TZ, day: "2-digit", month: "2-digit", year: "numeric" }) : "");
+  const zeit = (d) => (d ? `${datum(d)}, ${new Date(d).toLocaleTimeString("de-DE", { ...TZ, hour: "numeric", minute: "2-digit" })}` : "");
+  const tagMonat = (d) => new Date(d).toLocaleDateString("de-DE", { ...TZ, day: "2-digit", month: "2-digit" }).replace(/\.?$/, ".");
   const groesse = (b) => (b == null ? "" : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + " KB" : (b / 1024 / 1024).toFixed(1).replace(".", ",") + " MB");
   const du = () => (S.mitglied?.anrede || S.kunde?.anrede) === "du";
   const t = (sie, duForm) => (du() ? duForm : sie);
+  const vorname = () => (S.mitglied?.anzeigename || "").trim().split(/\s+/)[0] || "";
   const lokal = {
     get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* egal */ } },
+    weg: (k) => { try { localStorage.removeItem(k); } catch { /* egal */ } },
   };
   const route = () => (location.hash.replace(/^#\/?/, "") || "").split("/");
   const geh = (pfad) => { if (location.hash !== "#/" + pfad) location.hash = "#/" + pfad; else rendern(); };
-  const meldung = (el, text, art = "fehler") => { el.innerHTML = `<div class="meldung ${art}" role="${art === "fehler" ? "alert" : "status"}">${esc(text)}</div>`; };
-  const fehlerText = (e) => {
+  const SYM = {
+    check: "M379.15-258.31 168.62-468.85l32.61-32.23 177.92 177.93 379-379.39 32.62 32.62-411.62 411.61Z",
+    error: "M499.46-298.52q7.77-7.75 7.77-19.46t-7.75-19.48q-7.75-7.77-19.46-7.77t-19.48 7.75q-7.77 7.75-7.77 19.46t7.75 19.48q7.75 7.77 19.46 7.77t19.48-7.75Zm-39.92-133.33h45.38v-249.53h-45.38v249.53ZM480.33-100q-78.95 0-147.89-29.92-68.95-29.92-120.76-81.71-51.81-51.79-81.75-120.78Q100-401.39 100-480.43q0-78.66 29.92-147.87 29.92-69.21 81.71-120.52 51.79-51.31 120.78-81.25Q401.39-860 480.43-860q78.66 0 147.87 29.92 69.21 29.92 120.52 81.21 51.31 51.29 81.25 120.63Q860-558.9 860-480.33q0 78.95-29.92 147.89-29.92 68.95-81.21 120.57-51.29 51.63-120.63 81.75Q558.9-100 480.33-100Zm.17-45.39q139.19 0 236.65-97.76 97.46-97.77 97.46-237.35 0-139.19-97.27-236.65-97.27-97.46-237.34-97.46-139.08 0-236.85 97.27-97.76 97.27-97.76 237.34 0 139.08 97.76 236.85 97.77 97.76 237.35 97.76ZM480-480Z",
+    info: "M459.54-290h45.38v-230h-45.38v230Zm39.73-301.56q7.96-7.57 7.96-19.05 0-11.95-7.85-19.9-7.85-7.95-19.36-7.95-11.9 0-19.58 7.95-7.67 7.95-7.67 19.9 0 11.48 7.94 19.05 7.95 7.56 19.27 7.56 11.33 0 19.29-7.56ZM480.33-100q-78.95 0-147.89-29.92-68.95-29.92-120.76-81.71-51.81-51.79-81.75-120.78Q100-401.39 100-480.43q0-78.66 29.92-147.87 29.92-69.21 81.71-120.52 51.79-51.31 120.78-81.25Q401.39-860 480.43-860q78.66 0 147.87 29.92 69.21 29.92 120.52 81.21 51.31 51.29 81.25 120.63Q860-558.9 860-480.33q0 78.95-29.92 147.89-29.92 68.95-81.21 120.57-51.29 51.63-120.63 81.75Q558.9-100 480.33-100Zm.17-45.39q139.19 0 236.65-97.76 97.46-97.77 97.46-237.35 0-139.19-97.27-236.65-97.27-97.46-237.34-97.46-139.08 0-236.85 97.27-97.76 97.27-97.76 237.34 0 139.08 97.76 236.85 97.77 97.76 237.35 97.76ZM480-480Z",
+    schedule: "m630.08-295.46 33.84-33.85-159-160.01v-200.22h-45.38v218.85l170.54 175.23ZM480.07-100q-78.22 0-147.4-29.92t-120.99-81.71q-51.81-51.79-81.75-120.94Q100-401.71 100-479.93q0-78.22 29.92-147.4t81.71-120.99q51.79-51.81 120.94-81.75Q401.71-860 479.93-860q78.22 0 147.4 29.92t120.99 81.71q51.81 51.79 81.75 120.94Q860-558.29 860-480.07q0 78.22-29.92 147.4t-81.71 120.99q-51.79 51.81-120.94 81.75Q558.29-100 480.07-100ZM480-480Zm0 334.61q138.08 0 236.35-98.26 98.26-98.27 98.26-236.35 0-138.08-98.26-236.35-98.27-98.26-236.35-98.26-138.08 0-236.35 98.26-98.26 98.27-98.26 236.35 0 138.08 98.26 236.35 98.27 98.26 236.35 98.26Z",
+    description: "M329.39-257.31h301.22v-45.38H329.39v45.38Zm0-167.31h301.22V-470H329.39v45.38ZM180-100v-760h405.23L780-665.23V-100H180Zm382.54-544.77v-169.84H225.39v669.22h509.22v-499.38H562.54ZM225.39-814.61v169.84-169.84 669.22-669.22Z",
+  };
+  const sym = (n) => `<svg class="sym" viewBox="0 -960 960 960" aria-hidden="true"><path d="${SYM[n]}"/></svg>`;
+  const LOGO = (h = 26) => `<span class="logo"><img src="assets/logo-quer-negativ.svg" alt="PPotthoff" style="height:${h}px;width:auto;display:block"></span>`;
+
+  // Meldungen: an der Stelle der Handlung, Fokus springt hin, bleibt stehen
+  function meldung(el, text, art = "fehler", html = false) {
+    if (!el) return;
+    const s = art === "fehler" ? "error" : art === "ok" ? "check" : "info";
+    el.innerHTML = `<div class="meldung ${art === "fehler" ? "fehler" : art === "ok" ? "ok" : ""}" role="${art === "fehler" ? "alert" : "status"}" tabindex="-1">${sym(s)}<div>${html ? text : `<p>${esc(text)}</p>`}</div></div>`;
+    el.firstElementChild.focus();
+  }
+  const fehlerSatz = () => `Das hat nicht geklappt. Bitte noch einmal versuchen oder an ${KONTAKT} schreiben.`;
+  function fehlerText(e, ctx = "") {
     const m = (e && (e.message || e.error_description || e.msg)) || String(e);
     if (/Invalid login credentials/i.test(m)) return "Mail-Adresse oder Passwort stimmen nicht. Bitte noch einmal versuchen.";
     if (/Invalid TOTP/i.test(m)) return "Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.";
-    if (/expired|invalid/i.test(m)) return "Der Code stimmt nicht oder ist abgelaufen. Bitte einen neuen Code anfordern.";
-    if (/keinen Zugang|not allowed|Signups not allowed/i.test(m)) return "Für diese Adresse gibt es keinen Zugang. Bitte bei uns melden: kontakt@ppotthoff.io";
+    if (ctx === "code" && /expired|invalid|otp|token/i.test(m)) return "Der Code stimmt nicht oder ist abgelaufen. Bitte unten einen neuen schicken lassen.";
+    if (/JWT expired|session/i.test(m)) return t("Ihre Anmeldung ist abgelaufen. Bitte kurz anmelden, Ihr Text bleibt erhalten.", "Deine Anmeldung ist abgelaufen. Bitte kurz anmelden, dein Text bleibt erhalten.");
     if (/rate limit|security purposes|seconds/i.test(m)) return "Zu viele Versuche. Bitte kurz warten und dann noch einmal.";
-    return m;
-  };
+    return fehlerSatz();
+  }
   async function laden(b, pfad) {
     const { data, error } = await sb.storage.from(b).download(pfad);
     if (error) throw error;
@@ -45,22 +68,87 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
-  const LOGO = `<img src="assets/logo-quer-negativ.svg" alt="PPotthoff">`;
+  // Frist als Zahl: „bis“ klein, Tag und Monat groß, Jahr nur außerhalb des laufenden Jahres
+  function fristParse(f) {
+    if (!f) return null;
+    if (/^\d{4}-\d{2}-\d{2}/.test(f)) return new Date(String(f).slice(0, 10) + "T12:00:00");
+    const m = String(f).match(/(\d{1,2})\.(\d{1,2})\.(\d{4})?/);
+    if (!m) return null;
+    return new Date(m[3] ? +m[3] : new Date().getFullYear(), +m[2] - 1, +m[1], 12);
+  }
+  function fristHtml(f, mitBis = true) {
+    const d = fristParse(f);
+    if (!d) return f ? `<span class="frist" style="font-size:var(--t-neben);font-family:var(--sans)">${esc(f)}</span>` : "";
+    const jahr = d.getFullYear() !== new Date().getFullYear() ? `<span class="jahr">${d.getFullYear()}</span>` : "";
+    return `<span class="frist">${mitBis ? '<span class="bis">bis</span>' : ""}${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${jahr}</span>`;
+  }
+  // Entwürfe in Formularen bleiben im Browser, bis sie gesendet sind
+  function entwurfVerdrahten(root = app) {
+    root.querySelectorAll("[data-entwurf]").forEach((f) => {
+      const k = "entwurf:" + f.dataset.entwurf;
+      const alt = lokal.get(k);
+      if (alt && !f.value) f.value = alt;
+      f.addEventListener("input", () => (f.value ? lokal.set(k, f.value) : lokal.weg(k)));
+    });
+  }
+  const entwurfWeg = (key) => lokal.weg("entwurf:" + key);
+
+  // „Neu für dich“: seit dem letzten Besuch. Besuch = Anmeldung oder Öffnen nach mindestens einer Stunde Pause.
+  const BESUCH = () => "portal-besuch:" + S.user?.id;
+  const GESEHEN = () => "portal-gesehen:" + S.user?.id;
+  function besuchMerken() {
+    let b = {};
+    try { b = JSON.parse(lokal.get(BESUCH()) || "{}"); } catch { b = {}; }
+    const jetzt = Date.now();
+    if (!b.zuletzt) b = { vorher: null, zuletzt: jetzt, erster: true };
+    else if (jetzt - b.zuletzt > 3600e3) b = { vorher: b.zuletzt, zuletzt: jetzt, erster: false };
+    else b.zuletzt = jetzt;
+    lokal.set(BESUCH(), JSON.stringify(b));
+    S.besuch = b;
+  }
+  const gesehen = () => { try { return new Set(JSON.parse(lokal.get(GESEHEN()) || "[]")); } catch { return new Set(); } };
+  function alsGesehen(id) { const g = gesehen(); if (g.has(id)) return; g.add(id); lokal.set(GESEHEN(), JSON.stringify([...g].slice(-300))); }
+  const istNeu = (zeitpunkt) => !!(S.besuch?.vorher && zeitpunkt && new Date(zeitpunkt).getTime() > S.besuch.vorher);
 
   // ---------- Rahmen ----------
-  function rahmen(inhalt, reiter, aktiv, zaehler = {}) {
-    const name = S.mitglied?.rolle === "team" ? "Interner Bereich" : S.kunde?.name || "";
-    const tabs = reiter.map(([pfad, text]) => {
-      const z = zaehler[pfad] ? `<span class="zahl" aria-label="${zaehler[pfad]} offen">${zaehler[pfad]}</span>` : "";
-      return `<a href="#/${pfad}" ${aktiv === pfad ? 'aria-current="page"' : ""}>${esc(text)}${z}</a>`;
+  const KUNDE_REITER = () => [["", "Übersicht"], ["berichte", "Berichte"], ["entscheidungen", "Entscheidungen"], ["aufgaben", "Aufgaben"], ["anliegen", "Anliegen"], ["dateien", "Dateien"],
+    ...(S.mehr.roadmap ? [["roadmap", "Roadmap"]] : []), ...(S.mehr.werkzeuge ? [["werkzeuge", "Werkzeuge"]] : [])];
+
+  function rahmen({ titel, aktiv, buehne, inhalt, zaehler = {}, reiter = null }) {
+    const team = S.mitglied?.rolle === "team";
+    const name = team ? "Interner Bereich" : S.kunde?.name || "";
+    const tabs = (reiter || KUNDE_REITER()).map(([pfad, text]) => {
+      const z = zaehler[pfad] ? `<span class="zahl" aria-label="${zaehler[pfad]} ${team ? "offen" : t("warten auf Sie", "warten auf dich")}">${zaehler[pfad]}</span>` : "";
+      return `<li><a href="#/${pfad}" ${aktiv === pfad ? 'aria-current="page"' : ""}>${esc(text)}${z}</a></li>`;
     }).join("");
-    app.innerHTML = `
-      <header class="kopf"><div class="wrap">${LOGO}<div class="rechts"><span class="kunde"><b>${esc(name)}</b> · Kundenportal</span><button class="text" id="abmelden">Abmelden</button></div></div></header>
-      <nav class="reiter" aria-label="Bereiche"><div class="wrap">${tabs}</div></nav>
-      <main id="haupt"><div class="wrap">${inhalt}</div></main>
-      <footer class="fuss"><div class="wrap"><span>PPotthoff GmbH &amp; Co. KG · Gütersloh</span><span>Fragen? <a href="mailto:kontakt@ppotthoff.io">kontakt@ppotthoff.io</a></span></div></footer>`;
-    document.getElementById("abmelden").onclick = abmelden;
-    window.scrollTo(0, 0);
+    app.innerHTML = `<a class="sprung" href="#inhalt">Zum Inhalt</a>
+      <header class="kopf"><div class="wrap">${LOGO()}<div class="rechts"><span class="wer"><b>${esc(name)}</b> · Kundenportal</span><a href="#" id="abmelden">Abmelden</a></div></div></header>
+      <nav class="reiter" aria-label="Bereiche"><div class="wrap"><ul>${tabs}</ul></div></nav>
+      <main id="inhalt" tabindex="-1">${buehne ? `<div class="buehne${buehne.uebersicht ? "" : " seite"}"><div class="wrap">${buehne.html}</div></div>` : ""}
+        <div class="unten"><div class="wrap">${inhalt}</div></div></main>
+      <footer class="fuss"><div class="wrap"><span>PPotthoff GmbH &amp; Co. KG · Gütersloh</span><a href="#/wer-sieht-was">Wer sieht was?</a><span>Fragen? <a href="mailto:${KONTAKT}">${KONTAKT}</a></span></div></footer>`;
+    document.getElementById("abmelden").onclick = (e) => { e.preventDefault(); abmelden(); };
+    document.title = `${titel} · ${team ? "Interner Bereich" : S.kunde?.name || ""} · Kundenportal`;
+    if (!S.stehenBleiben) window.scrollTo(0, 0);
+    S.stehenBleiben = false;
+    const h = app.querySelector("h1");
+    if (h) { h.setAttribute("tabindex", "-1"); if (S.fokusNachWechsel) h.focus({ preventScroll: true }); }
+    S.fokusNachWechsel = true;
+    entwurfVerdrahten();
+  }
+  // Platzhalter bei jedem Seitenwechsel: Kopf und Reiter stehen sofort
+  function laedt(aktiv, reiter) {
+    const f = S.fokusNachWechsel;
+    rahmen({ titel: "Lädt", aktiv, reiter, zaehler: S.zaehler || {}, buehne: { html: `<div class="laedt"><p class="wort" role="status">${sym("schedule")}Einen Moment</p><div class="linie"></div><div class="balken" style="width:60%;height:28px"></div></div>` },
+      inhalt: `<div class="laedt"><div class="balken"></div><div class="balken"></div><div class="balken" style="width:40%"></div></div>` });
+    S.fokusNachWechsel = f;
+  }
+  function buehneSeite({ zurueck, kennung = "", titel, unter = "" }) {
+    return { html: `${zurueck ? `<p class="zurueck"><a class="textlink" href="#/${zurueck[0]}">${esc(zurueck[1])}</a></p>` : ""}${kennung ? `<p class="kennung">${kennung}</p>` : ""}<h1>${esc(titel)}</h1>${unter ? `<p class="unterzeile">${unter}</p>` : ""}` };
+  }
+  const leer = (text) => `<div class="leer">${sym("info")}<p>${esc(text)}</p></div>`;
+  function zeile({ href, art = "", titel, unter = "", frist = "", tun = "Öffnen", mitArt = true }) {
+    return `<li><a href="${href}">${mitArt ? `<span class="art">${art}</span>` : ""}<span class="titel">${esc(titel)}</span>${unter ? `<span class="unter">${unter}</span>` : ""}${frist || '<span class="frist" aria-hidden="true"></span>'}<span class="tun">${esc(tun)}</span></a></li>`;
   }
 
   async function abmelden() {
@@ -71,101 +159,83 @@
   }
 
   // ---------- Anmeldung ----------
-  // Kunden: Mail-Adresse, dann sechsstelliger Code per Mail. Ein Konto entsteht nur für Adressen auf der Zugangsliste
-  // (geprüft in der Datenbank). Team: wahlweise Passwort, danach immer der zweite Faktor.
-  const HERO = `<section class="hero">${LOGO}
-      <div><div class="label" style="color:var(--green-soft)">Kundenportal</div>
-      <h1 style="margin-top:12px">Zahlen.<em>Entscheidungen.</em></h1>
-      <p>Montagsbrief, Monatsauswertung, offene Entscheidungen, Aufgaben und Dateien an einem Ort.</p></div>
-      <div class="klein" style="color:var(--green-soft)">Gehostet in Frankfurt am Main · Verbindung verschlüsselt</div>
-    </section>`;
+  // Kunden: Mail-Adresse, dann sechsstelliger Code per Mail. Ein Konto entsteht nur für Adressen auf der Zugangsliste.
+  // Team: wahlweise Passwort, danach immer der zweite Faktor. Das Ziel in der Adresse bleibt über die Anmeldung erhalten.
+  const SEITE = () => `<section class="seite">${LOGO(32)}<div class="lang"><p class="klein">Kundenportal</p>
+      <h1 style="margin-top:8px">Was gerade los ist. An einem Ort.</h1><p>Montagsbrief, Monatsauswertung, Entscheidungen und Dateien von PPotthoff.</p></div>
+      <p class="klein lang">Server in Frankfurt am Main · Verbindung verschlüsselt</p></section>`;
   const istMail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
-
-  function anmeldung(hinweis, vorbelegt = lokal.get("portal-mail") || "") {
+  const hatZiel = () => !!route()[0] && !route()[0].startsWith("intern");
+  function anmeldeRahmen(form) {
     document.title = "Anmelden · Kundenportal PPotthoff";
-    app.innerHTML = `
-      <div class="anmeldung">${HERO}
-        <section class="form">
-          <h2>Anmelden</h2>
-          <p class="leise" style="margin:-4px 0 20px">Mail-Adresse eingeben, Code per Mail bekommen, fertig. Kein Passwort.</p>
-          <form id="f" novalidate>
-            <label class="feld"><span class="label">Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="email" autocapitalize="none" spellcheck="false" required></label>
-            <button class="btn" type="submit">Code anfordern</button>
-            <div id="m">${hinweis ? `<div class="meldung ok" role="status">${esc(hinweis)}</div>` : ""}</div>
-          </form>
-          <p class="klein leise" style="margin-top:24px">Kein Code angekommen? Spam-Ordner ansehen oder an <a href="mailto:kontakt@ppotthoff.io">kontakt@ppotthoff.io</a> schreiben.</p>
-          <p class="klein" style="margin-top:12px"><button class="text" type="button" id="team">Anmeldung fürs Team mit Passwort</button></p>
-        </section>
-      </div>`;
+    app.innerHTML = `<main id="inhalt" class="anmeldung">${SEITE()}<section class="form">${form}</section></main>`;
+  }
+
+  function anmeldung(hinweis, vorbelegt = lokal.get("portal-mail") || "", art = "ok") {
+    anmeldeRahmen(`${hatZiel() && !hinweis ? `<div class="meldung" role="status">${sym("info")}<p>Bitte kurz anmelden. Danach geht es direkt weiter.</p></div>` : ""}
+      <h2>Anmelden</h2><p class="leise">Mail-Adresse eingeben, Code aus der Mail eintippen, fertig. Ein Passwort gibt es nicht.</p>
+      <form id="f" novalidate><label class="feld"><span>Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="email" autocapitalize="none" spellcheck="false" required></label>
+      <button class="btn" type="submit">Code schicken</button><div id="m"></div></form>
+      <p class="fein" style="margin-top:20px">Kein Code angekommen? Bitte im Spam-Ordner nachsehen oder an <a href="mailto:${KONTAKT}">${KONTAKT}</a> schreiben.</p>
+      <p><button class="text fein" type="button" id="team">Anmeldung fürs Team</button></p>`);
     const f = document.getElementById("f");
-    (vorbelegt ? f.querySelector("button") : f.mail).focus();
+    if (hinweis) meldung(document.getElementById("m"), hinweis, art);
+    else (vorbelegt ? f.querySelector("button") : f.mail).focus();
     document.getElementById("team").onclick = () => teamAnmeldung(f.mail.value.trim());
     f.onsubmit = async (ev) => {
       ev.preventDefault();
       const m = document.getElementById("m");
       const mail = f.mail.value.trim().toLowerCase();
-      if (!istMail(mail)) return meldung(m, "Bitte eine gültige Mail-Adresse eingeben.");
+      f.mail.removeAttribute("aria-invalid");
+      if (!istMail(mail)) { f.mail.setAttribute("aria-invalid", "true"); return meldung(m, "Bitte eine gültige Mail-Adresse eingeben."); }
       const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird gesendet";
       const { error } = await sb.auth.signInWithOtp({ email: mail, options: { shouldCreateUser: true } });
-      knopf.disabled = false; knopf.textContent = "Code anfordern";
-      if (error) return meldung(m, fehlerText(error));
+      knopf.disabled = false; knopf.textContent = "Code schicken";
+      if (error) {
+        const msg = error.message || "";
+        if (/keinen Zugang|not allowed|Signups not allowed|hook/i.test(msg)) { f.mail.setAttribute("aria-invalid", "true"); return meldung(m, `<p>Für <b>${esc(mail)}</b> gibt es keinen Zugang. Stimmt die Adresse? Sonst bitte an ${KONTAKT} schreiben.</p>`, "fehler", true); }
+        if (/gesperrt/i.test(msg)) return meldung(m, `Dieser Zugang ist gesperrt. Bitte an ${KONTAKT} schreiben.`);
+        return meldung(m, fehlerText(error));
+      }
       lokal.set("portal-mail", mail);
       codeEingabe(mail);
     };
   }
 
-  function codeEingabe(mail) {
-    app.innerHTML = `
-      <div class="anmeldung">${HERO}
-        <section class="form">
-          <h2>Code eingeben</h2>
-          <p class="leise" style="margin:-4px 0 20px">Der Code ist unterwegs an <b>${esc(mail)}</b>. Er gilt zehn Minuten.</p>
-          <form id="f" novalidate>
-            <label class="feld"><span class="label">Sechsstelliger Code</span><input type="text" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" required></label>
-            <button class="btn" type="submit">Anmelden</button>
-            <div id="m"></div>
-          </form>
-          <p class="klein" style="margin-top:24px"><button class="text" type="button" id="neu">Neuen Code anfordern</button> · <button class="text" type="button" id="andere">Andere Adresse</button></p>
-        </section>
-      </div>`;
+  function codeEingabe(mail, hinweis = "") {
+    anmeldeRahmen(`${hatZiel() ? `<div class="meldung" role="status">${sym("info")}<p>Danach geht es direkt weiter.</p></div>` : ""}
+      <h2>Code eingeben</h2><p class="leise">Der Code ist unterwegs an <b>${esc(mail)}</b>. Er gilt zehn Minuten. Der Code gilt auch auf einem anderen Gerät.</p>
+      <form id="f" novalidate><label class="feld"><span>Code aus der Mail</span><input class="code-feld" type="text" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" required></label>
+      <button class="btn" type="submit">Anmelden</button><div id="m"></div></form>
+      <div class="knopfzeile"><button class="btn zwei" type="button" id="neu">Neuen Code schicken</button><button class="text" type="button" id="andere">Andere Mail-Adresse</button></div>`);
     const f = document.getElementById("f");
-    f.code.focus();
-    // Code aus der Zwischenablage oder Autofill: bei sechs Ziffern direkt absenden
+    if (hinweis) meldung(document.getElementById("m"), hinweis, "ok"); else f.code.focus();
     f.code.oninput = () => { f.code.value = f.code.value.replace(/\D/g, "").slice(0, 6); if (f.code.value.length === 6) f.requestSubmit(); };
     document.getElementById("andere").onclick = () => anmeldung(null, "");
     document.getElementById("neu").onclick = async () => {
-      const m = document.getElementById("m");
       const { error } = await sb.auth.signInWithOtp({ email: mail, options: { shouldCreateUser: true } });
-      if (error) return meldung(m, fehlerText(error));
-      meldung(m, "Ein neuer Code ist unterwegs.", "ok");
+      if (error) return meldung(document.getElementById("m"), fehlerText(error));
+      codeEingabe(mail, "Ein neuer Code ist unterwegs.");
     };
     f.onsubmit = async (ev) => {
       ev.preventDefault();
       const m = document.getElementById("m");
       const code = f.code.value.replace(/\D/g, "");
       if (code.length !== 6) return meldung(m, "Bitte die sechs Ziffern aus der Mail eingeben.");
-      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Lädt";
+      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird geprüft";
       const { error } = await sb.auth.verifyOtp({ email: mail, token: code, type: "email" });
       knopf.disabled = false; knopf.textContent = "Anmelden";
-      if (error) { f.code.value = ""; f.code.focus(); return meldung(m, fehlerText(error)); }
+      if (error) { f.code.value = ""; f.code.setAttribute("aria-invalid", "true"); meldung(m, fehlerText(error, "code")); return; }
       await start(true);
     };
   }
 
   function teamAnmeldung(vorbelegt = "") {
-    app.innerHTML = `
-      <div class="anmeldung">${HERO}
-        <section class="form">
-          <h2>Team</h2>
-          <form id="f" novalidate>
-            <label class="feld"><span class="label">Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
-            <label class="feld"><span class="label">Passwort</span><input type="password" name="passwort" autocomplete="current-password" required></label>
-            <button class="btn" type="submit">Anmelden</button>
-            <div id="m"></div>
-          </form>
-          <p class="klein" style="margin-top:24px"><button class="text" type="button" id="zur">Zurück zur Anmeldung mit Code</button></p>
-        </section>
-      </div>`;
+    anmeldeRahmen(`<h2>Team</h2><form id="f" novalidate>
+        <label class="feld"><span>Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+        <label class="feld"><span>Passwort</span><input type="password" name="passwort" autocomplete="current-password" required></label>
+        <button class="btn" type="submit">Anmelden</button><div id="m"></div></form>
+      <p><button class="text" type="button" id="zur">Zurück zur Anmeldung mit Code</button></p>`);
     const f = document.getElementById("f");
     (vorbelegt ? f.passwort : f.mail).focus();
     document.getElementById("zur").onclick = () => anmeldung();
@@ -174,7 +244,7 @@
       const m = document.getElementById("m");
       const mail = f.mail.value.trim().toLowerCase();
       if (!istMail(mail) || !f.passwort.value) return meldung(m, "Bitte Mail-Adresse und Passwort eingeben.");
-      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Lädt";
+      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird geprüft";
       const { error } = await sb.auth.signInWithPassword({ email: mail, password: f.passwort.value });
       knopf.disabled = false; knopf.textContent = "Anmelden";
       if (error) return meldung(m, fehlerText(error));
@@ -192,20 +262,18 @@
     if (totp) {
       faktorId = totp.id;
     } else {
-      // Unfertige Faktoren aufräumen, dann neu einrichten
       for (const f of fakt?.all || []) if (f.status !== "verified") await sb.auth.mfa.unenroll({ factorId: f.id });
       const { data, error } = await sb.auth.mfa.enroll({ factorType: "totp", friendlyName: "Authenticator " + new Date().toISOString().slice(0, 10) });
-      if (error) { anmeldung(); meldung(document.getElementById("m"), fehlerText(error)); return false; }
+      if (error) { anmeldung(fehlerText(error), undefined, "fehler"); return false; }
       faktorId = data.id;
-      einrichtung = `<p>Der interne Bereich braucht eine Zwei-Faktor-Anmeldung. Scannen Sie den Code mit einer Authenticator-App (z. B. Bitwarden, 1Password, Google Authenticator) und geben Sie dann den sechsstelligen Code ein.</p>
+      einrichtung = `<p>Der interne Bereich braucht eine Zwei-Faktor-Anmeldung. Code mit einer Authenticator-App scannen (z. B. Bitwarden, 1Password, Google Authenticator), dann den sechsstelligen Code eingeben.</p>
         <div class="qr"><img src="${esc(data.totp.qr_code)}" alt="QR-Code für die Authenticator-App"></div>
-        <p class="klein leise">Ohne Kamera: Schlüssel <code>${esc(data.totp.secret)}</code></p>`;
+        <p class="fein leise">Ohne Kamera: Schlüssel <code>${esc(data.totp.secret)}</code></p>`;
     }
     return new Promise((fertig) => {
-      app.innerHTML = `<div class="anmeldung"><section class="hero">${LOGO}<div><div class="label" style="color:var(--green-soft)">Interner Bereich</div><h1 style="margin-top:12px">Zweiter Schritt.</h1></div><div></div></section>
-        <section class="form"><h2>${totp ? "Code eingeben" : "Zwei-Faktor einrichten"}</h2>${einrichtung}
-        <form id="f2" novalidate><label class="feld"><span class="label">Code aus der App</span><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
-        <button class="btn" type="submit">Bestätigen</button> <button class="text" type="button" id="zur">Abbrechen</button><div id="m2"></div></form></section></div>`;
+      anmeldeRahmen(`<h2>${totp ? "Code aus der App" : "Zwei-Faktor einrichten"}</h2>${einrichtung}
+        <form id="f2" novalidate><label class="feld"><span>Code aus der App</span><input class="code-feld" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+        <button class="btn" type="submit">Bestätigen</button><div id="m2"></div></form><p><button class="text" type="button" id="zur">Abbrechen</button></p>`);
       const f = document.getElementById("f2");
       f.code.focus();
       document.getElementById("zur").onclick = () => { abmelden(); fertig(false); };
@@ -223,10 +291,13 @@
     if (!session) return anmeldung();
     S.user = session.user;
     const { data: m } = await sb.from("mitglieder").select("rolle,kunde_id,anzeigename,anrede,gesperrt_am,team_bestaetigt_am").eq("user_id", S.user.id).maybeSingle();
-    if (!m) { await sb.auth.signOut(); return anmeldung("Dieser Zugang ist keinem Kunden zugeordnet. Bitte bei uns melden: kontakt@ppotthoff.io"); }
-    if (m.gesperrt_am) { await sb.auth.signOut(); return anmeldung("Dieser Zugang ist gesperrt. Bitte bei uns melden: kontakt@ppotthoff.io"); }
-    if (m.rolle === "team" && !m.team_bestaetigt_am) { await sb.auth.signOut(); return anmeldung("Der Team-Zugang ist noch nicht freigeschaltet. Bitte ein anderes Team-Mitglied fragen."); }
+    if (!m) { await sb.auth.signOut(); return anmeldung(`Dieser Zugang ist keinem Kunden zugeordnet. Bitte an ${KONTAKT} schreiben.`, undefined, "fehler"); }
+    if (m.gesperrt_am) { await sb.auth.signOut(); return anmeldung(`Dieser Zugang ist gesperrt. Bitte an ${KONTAKT} schreiben.`, undefined, "fehler"); }
+    if (m.rolle === "team" && !m.team_bestaetigt_am) { await sb.auth.signOut(); return anmeldung("Der Team-Zugang ist noch nicht freigeschaltet. Bitte ein anderes Team-Mitglied fragen.", undefined, "fehler"); }
     S.mitglied = m;
+    // Migration vom 15.11. vorhanden? Dann erscheinen die Teile, die sie braucht.
+    const probe = await sb.from("dateien").select("sichtbar").limit(1);
+    S.g3 = !probe.error;
     if (m.rolle === "team") {
       const ok = await zweiFaktor();
       if (!ok) return;
@@ -237,311 +308,154 @@
     } else {
       const { data: k } = await sb.from("kunden").select("*").eq("id", m.kunde_id).single();
       S.kunde = k;
+      besuchMerken();
+      const [r, w] = await Promise.all([
+        sb.from("roadmap").select("id", { count: "exact", head: true }).eq("sichtbar", true).neq("status", "erledigt"),
+        sb.from("werkzeuge").select("id", { count: "exact", head: true }),
+      ]);
+      S.mehr = { roadmap: r.count || 0, werkzeuge: w.count || 0 };
       if (route()[0].startsWith("intern")) location.hash = "#/";
     }
     if (frischAngemeldet) sb.rpc("angemeldet").then(() => {});
+    S.fokusNachWechsel = false;
     rendern();
   }
 
   // ---------- Kundensicht ----------
-  const KUNDE_REITER = [["", "Übersicht"], ["berichte", "Berichte"], ["entscheidungen", "Entscheidungen"], ["aufgaben", "Aufgaben"], ["anliegen", "Anliegen"], ["dateien", "Dateien"], ["roadmap", "Roadmap"], ["werkzeuge", "Werkzeuge"]];
-  const vorname = () => (S.mitglied?.anzeigename || "").trim().split(/\s+/)[0] || "";
-  const ANLIEGEN_STATUS = { offen: "Offen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
-  const ROADMAP_STATUS = { laeuft: "Läuft", geplant: "Geplant", erledigt: "Erledigt" };
-
-  // ---------- Kommentare (gleich für Kunde und Team) ----------
-  // Name, Rolle und Zeit setzt die Datenbank aus dem Zugang; die Oberfläche schickt nur den Text.
-  async function kommentare(art, id, kundeId) {
-    const { data } = await sb.from("kommentare").select("id,text,autor_name,autor_rolle,erstellt").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
-    const liste = (data || []).map((k) => `<div class="kom"><div class="wer"><b>${esc(k.autor_name || "")}</b> · ${zeit(k.erstellt)}</div><div class="text">${esc(k.text)}</div></div>`).join("");
-    return `<section class="abschnitt" style="margin-top:40px"><div class="abschnitt-kopf"><h2>Kommentare</h2></div>
-      <div class="thread">${liste || `<p class="leise klein" style="padding:12px 0">Noch keine Kommentare.</p>`}</div>
-      <form id="kf" data-art="${art}" data-id="${id}" data-kunde="${kundeId}" novalidate style="margin-top:20px;max-width:720px">
-        <label class="feld"><span class="label">${t("Ihr Kommentar", "Dein Kommentar")}</span><textarea name="text" rows="3" maxlength="5000"></textarea></label>
-        <button class="btn" type="submit">Senden</button><div class="m"></div></form></section>`;
-  }
-  function kommentarVerdrahten(danach) {
-    const f = document.getElementById("kf");
-    if (!f) return;
-    f.onsubmit = async (ev) => {
-      ev.preventDefault();
-      const text = f.text.value.trim();
-      if (!text) return meldung(f.querySelector(".m"), "Bitte einen Text eingeben.");
-      const k = f.querySelector("button"); k.disabled = true;
-      const { error } = await sb.from("kommentare").insert({ kunde_id: f.dataset.kunde, bezug_art: f.dataset.art, bezug_id: f.dataset.id, text });
-      if (error) { k.disabled = false; return meldung(f.querySelector(".m"), fehlerText(error)); }
-      danach();
-    };
-  }
-
   async function zaehlerKunde() {
     const [e, a] = await Promise.all([
       sb.from("entscheidungen").select("id", { count: "exact", head: true }).eq("status", "offen"),
       sb.from("aufgaben").select("id", { count: "exact", head: true }).eq("liegt_bei", "kunde").eq("erledigt", false),
     ]);
-    return { entscheidungen: e.count || 0, aufgaben: a.count || 0 };
+    S.zaehler = { entscheidungen: e.count || 0, aufgaben: a.count || 0 };
+    return S.zaehler;
   }
+  const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz" };
+  const ANLIEGEN_STATUS = { offen: "Angekommen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
+  const ANTWORT = { ja: "Ja", nein: "Nein", intern: "Kläre ich intern" };
+  function zeitraumText(r) {
+    if (r.art === "wochenstand" && r.zeitraum_start) {
+      const a = new Date(r.zeitraum_start + "T12:00:00"); const b = new Date(a); b.setDate(a.getDate() + 6);
+      return `${r.zeitraum} · ${tagMonat(a)} bis ${datum(b)}`;
+    }
+    return r.zeitraum || "";
+  }
+  const berichtTitel = (r) => `${ART[r.art] || "Bericht"} ${r.zeitraum}`;
+  function montagDieserWoche() { const d = new Date(); const tag = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - tag); return d; }
+  function kw(d) { const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const n = x.getUTCDay() || 7; x.setUTCDate(x.getUTCDate() + 4 - n); const j = new Date(Date.UTC(x.getUTCFullYear(), 0, 1)); return Math.ceil(((x - j) / 864e5 + 1) / 7); }
+  const sortFrist = (p, q) => { const a = fristParse(p.frist), b = fristParse(q.frist); return a && b ? a - b : a ? -1 : b ? 1 : 0; };
 
   async function uebersicht() {
-    const [z, b, e, a, an] = await Promise.all([
+    const [z, b, e, a, an, k, d] = await Promise.all([
       zaehlerKunde(),
-      sb.from("berichte").select("id,art,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(12),
-      sb.from("entscheidungen").select("id,frage,frist,wenn_nein").eq("status", "offen").order("erstellt").limit(5),
-      sb.from("aufgaben").select("id,titel,frist").eq("liegt_bei", "kunde").eq("erledigt", false).order("frist", { nullsFirst: false }).limit(5),
-      sb.from("anliegen").select("id,titel,status,aktualisiert").neq("status", "erledigt").order("aktualisiert", { ascending: false }).limit(3),
+      sb.from("berichte").select("id,art,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(20),
+      sb.from("entscheidungen").select("id,frage,frist,antwort,erstellt").eq("status", "offen").order("erstellt"),
+      sb.from("aufgaben").select("id,titel,frist,aktualisiert").eq("liegt_bei", "kunde").eq("erledigt", false),
+      sb.from("anliegen").select("id,titel,status,aktualisiert").order("aktualisiert", { ascending: false }).limit(30),
+      sb.from("kommentare").select("id,bezug_art,bezug_id,autor_name,autor_rolle,erstellt").eq("autor_rolle", "team").order("erstellt", { ascending: false }).limit(30),
+      sb.from("dateien").select("id,name,notiz,richtung,erstellt").eq("richtung", "von_uns").order("erstellt", { ascending: false }).limit(10),
     ]);
     const alle = b.data || [];
-    const woche = alle.find((r) => r.art === "wochenstand");
-    const monat = alle.find((r) => r.art === "monatsauswertung");
-    // „Was ist los“: die Kurzfassung des neuesten Berichts, ein Satz je Zeile
-    const lageQuelle = woche || monat;
-    const lage = (lageQuelle?.zusammenfassung || "").split(/\n+/).map((x) => x.trim()).filter(Boolean);
-    const hallo = vorname() ? `${du() ? "Hallo" : "Guten Tag"} ${esc(vorname())}, das ist gerade los.` : "Das ist gerade los.";
-    const kopf = lage.length
-      ? `<div class="label">Stand ${esc(lageQuelle.zeitraum)}</div><h1 style="margin-top:10px">${hallo}</h1><div class="lage">${lage.map((x) => `<p>${esc(x)}</p>`).join("")}</div>`
-      : `<div class="label">Kundenportal · ${esc(S.kunde.name)}</div><h1 style="margin-top:10px">${hallo}</h1><div class="leer" style="max-width:760px"><span>Der erste Bericht liegt hier, sobald er freigegeben ist.</span></div>`;
+    const brief = alle.find((r) => r.art === "wochenstand");
+    const lage = (brief?.zusammenfassung || "").split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 3);
+    const erster = S.besuch?.erster;
+    // Wartet: offene Entscheidungen (auch „kläre ich intern“) und Aufgaben beim Kunden; mit Frist zuerst, die nächste oben, danach das Älteste
     const wartet = [
-      ...(e.data || []).map((x) => `<li><div><div class="label">Entscheidung</div><div class="titel">${esc(x.frage)}</div>${x.frist ? `<div class="unter">Frist: ${esc(x.frist)}</div>` : ""}</div><div class="aktionen"><a class="btn" href="#/entscheidungen">Entscheiden</a></div></li>`),
-      ...(a.data || []).map((x) => `<li><div><div class="label">Aufgabe</div><div class="titel"><a href="#/aufgaben/${x.id}">${esc(x.titel)}</a></div><div class="unter">${x.frist ? "bis " + datum(x.frist) : t("Liegt bei Ihnen", "Liegt bei dir")}</div></div></li>`),
-    ].join("");
-    const neu = [
-      woche ? `<li><div><div class="label">Montagsbrief</div><div class="titel">${esc(woche.zeitraum)}</div><div class="unter">freigegeben am ${datum(woche.freigegeben_am)}</div></div><div class="aktionen"><a class="btn zwei" href="#/berichte/${woche.id}">Lesen</a></div></li>` : "",
-      monat ? `<li><div><div class="label">Monatsauswertung</div><div class="titel">${esc(monat.zeitraum)}</div><div class="unter">Im Browser und als PDF</div></div><div class="aktionen"><a class="btn zwei" href="#/berichte/${monat.id}">Lesen</a></div></li>` : "",
-      ...(an.data || []).map((x) => `<li><div><div class="label">Anliegen · ${esc(ANLIEGEN_STATUS[x.status])}</div><div class="titel"><a href="#/anliegen/${x.id}">${esc(x.titel)}</a></div><div class="unter">zuletzt ${zeit(x.aktualisiert)}</div></div></li>`),
-      `<li><div><div class="label">Anliegen</div><div class="titel">Etwas loswerden</div><div class="unter">Frage oder Auftrag direkt hier einstellen</div></div><div class="aktionen"><a class="btn" href="#/anliegen/neu">Neues Anliegen</a></div></li>`,
-    ].join("");
-    rahmen(`${kopf}
-      <div class="zwei-spalten abschnitt" style="margin-top:48px">
-        <section><div class="abschnitt-kopf"><h2>${t("Wartet auf Sie", "Wartet auf dich")}</h2></div>${wartet ? `<ul class="liste">${wartet}</ul>` : `<div class="leer">Gerade wartet nichts auf ${t("Sie", "dich")}.</div>`}</section>
-        <section><div class="abschnitt-kopf"><h2>Neu für ${t("Sie", "dich")}</h2></div><ul class="liste">${neu}</ul></section>
-      </div>`,
-      KUNDE_REITER, "", z);
-  }
-
-  function berichtZeile(r, intern = false) {
-    const art = r.art === "monatsauswertung" ? "Monatsauswertung" : "Wochenstand";
-    const marke = intern ? (r.status === "freigegeben" ? `<span class="marke gruen">freigegeben</span>` : r.status === "entwurf" ? `<span class="marke">Entwurf</span>` : `<span class="marke rot">zurückgezogen</span>`) : "";
-    const pdf = r.pdf_pfad ? `<button class="text" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(r.titel)}.pdf">PDF</button>` : "";
-    const lesen = `<a href="#/${intern ? "intern/vorschau" : "berichte"}/${r.id}">${intern ? "Vorschau" : "Lesen"}</a>`;
-    const frei = intern ? (r.status === "freigegeben"
-      ? `<button class="text" data-zurueck="${r.id}">Zurückziehen</button>`
-      : `<button class="btn" data-frei="${r.id}">Freigeben</button>`) : "";
-    return `<li><div><div class="titel">${esc(r.titel)}${marke}</div><div class="unter">${art} · ${esc(r.zeitraum)}${r.freigegeben_am ? " · freigegeben am " + datum(r.freigegeben_am) : ""}</div></div><div class="aktionen">${lesen}${pdf}${frei}</div></li>`;
-  }
-  function pdfKnoepfe() {
-    app.querySelectorAll("[data-pdf]").forEach((k) => (k.onclick = async () => {
-      k.disabled = true;
-      try { await herunterladen("berichte", k.dataset.pdf, k.dataset.name); } catch (e) { alertLeise(fehlerText(e)); }
-      k.disabled = false;
-    }));
-  }
-  function alertLeise(text) {
-    const m = document.createElement("div");
-    m.className = "meldung fehler"; m.setAttribute("role", "alert"); m.textContent = text;
-    document.getElementById("haupt")?.querySelector(".wrap")?.prepend(m);
-  }
-
-  async function berichte() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(),
-      sb.from("berichte").select("id,art,titel,zeitraum,pdf_pfad,freigegeben_am").order("zeitraum_start", { ascending: false })]);
-    const monat = (data || []).filter((r) => r.art === "monatsauswertung");
-    const woche = (data || []).filter((r) => r.art === "wochenstand");
-    const block = (titel, liste) => `<section class="abschnitt" style="margin-top:40px"><div class="abschnitt-kopf"><h2>${titel}</h2></div>${liste.length ? `<ul class="liste">${liste.map((r) => berichtZeile(r)).join("")}</ul>` : `<div class="leer">Noch keine ${titel} freigegeben.</div>`}</section>`;
-    rahmen(`<div class="label kicker">Archiv</div><h1>Berichte</h1>${block("Monatsauswertungen", monat)}${block("Wochenstände", woche)}`, KUNDE_REITER, "berichte", z);
-    pdfKnoepfe();
-  }
-
-  async function berichtAnzeigen(id, intern = false) {
-    const { data: r, error } = await sb.from("berichte").select("*").eq("id", id).maybeSingle();
-    const zurueck = intern ? "intern" : "berichte";
-    const reiter = intern ? INTERN_REITER : KUNDE_REITER;
-    if (error || !r) { rahmen(`<a class="zurueck" href="#/${zurueck}">Zurück</a><div class="leer">Diesen Bericht gibt es nicht oder er ist nicht freigegeben.</div>`, reiter, zurueck); return; }
-    const pdf = r.pdf_pfad ? `<button class="btn zwei" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(r.titel)}.pdf">Als PDF laden</button>` : "";
-    const frei = intern && r.status !== "freigegeben" ? `<button class="btn" data-frei="${r.id}">Für den Kunden freigeben</button>` : "";
-    rahmen(`<a class="zurueck" href="#/${zurueck}">Zurück zur Übersicht</a>
-      <div class="abschnitt-kopf" style="border:0"><div><div class="label kicker">${r.art === "monatsauswertung" ? "Monatsauswertung" : "Wochenstand"}${intern ? " · " + esc(r.status) : ""}</div><h1>${esc(r.zeitraum)}</h1></div><div class="aktionen" style="display:flex;gap:12px;flex-wrap:wrap">${frei}${pdf}</div></div>
-      <div class="bericht-rahmen"><iframe id="ber" title="${esc(r.titel)}" sandbox="allow-same-origin"></iframe></div>
-      ${await kommentare("bericht", r.id, r.kunde_id)}`, reiter, intern ? "intern" : "berichte");
-    kommentarVerdrahten(() => berichtAnzeigen(id, intern));
-    pdfKnoepfe();
-    if (intern) freigabeKnoepfe();
-    try {
-      const html = await (await laden("berichte", r.html_pfad)).text();
-      const f = document.getElementById("ber");
-      f.onload = () => {
-        const passe = () => { try { f.style.height = f.contentDocument.documentElement.scrollHeight + "px"; } catch { /* egal */ } };
-        passe(); setTimeout(passe, 300); setTimeout(passe, 1200);
-        window.addEventListener("resize", passe);
-      };
-      f.srcdoc = html;
-      if (!intern) sb.rpc("bericht_geoeffnet", { p_id: r.id }).then(() => {});
-    } catch (e) { alertLeise("Der Bericht konnte nicht geladen werden: " + fehlerText(e)); }
-  }
-
-  function entscheidungsKarte(d, intern = false) {
-    const kl = d.antwort === "ja" ? " ja" : d.antwort === "nein" ? " nein" : "";
-    const kopf = `<div class="num">${String(d.nr || "").padStart(2, "0")}</div>
-      <div><div class="label">${esc(d.kategorie || "Entscheidung")}</div><div class="frage">${esc(d.frage)}</div>
-      <div class="empf"><b>Empfehlung:</b> ${esc(d.empfehlung)}</div>${d.begruendung ? `<div style="margin-top:6px">${esc(d.begruendung)}</div>` : ""}
-      ${d.wenn_nein ? `<div class="neben">Wenn nein: ${esc(d.wenn_nein)}</div>` : ""}${d.frist ? `<div class="neben">Frist: ${esc(d.frist)}</div>` : ""}</div>`;
-    let rechts;
-    if (d.status === "beantwortet" || d.status === "erledigt") {
-      rechts = `<div class="ergebnis"><div class="label">${t("Ihre Entscheidung", "Deine Entscheidung")}</div><p style="margin-top:8px"><b>${d.antwort === "ja" ? "Ja" : "Nein"}</b>, ${esc(d.beantwortet_von || "")} am ${zeit(d.beantwortet_am)}</p>${d.kommentar ? `<p class="neben">„${esc(d.kommentar)}“</p>` : ""}${d.status === "erledigt" ? `<p class="neben">Von uns übernommen.</p>` : intern ? `<p style="margin-top:12px"><button class="text" data-erledigt="${d.id}">Als übernommen markieren</button></p>` : `<p class="neben">Bei uns angekommen.</p>`}</div>`;
-    } else if (intern) {
-      rechts = `<div class="ergebnis"><div class="label">Status</div><p style="margin-top:8px">${d.status === "entwurf" ? "Entwurf, sichtbar nach Freigabe des Berichts" : "offen beim Kunden"}</p></div>`;
-    } else {
-      rechts = `<div class="antwort"><div class="label">${t("Ihre Entscheidung", "Deine Entscheidung")}</div>
-        <form data-ent="${d.id}" novalidate style="margin-top:8px">
-          <fieldset style="border:0"><legend class="sr">Ja oder Nein</legend><div class="janein">
-            <label><input type="radio" name="a" value="ja"> Ja</label><label><input type="radio" name="a" value="nein"> Nein</label></div></fieldset>
-          <label class="feld" style="margin:0"><span class="label">Kommentar (optional)</span><textarea name="k" rows="2"></textarea></label>
-          <button class="btn" type="submit">Entscheidung senden</button><div class="m"></div></form></div>`;
+      ...(e.data || []).map((x) => ({ frist: x.frist, seit: x.erstellt, html: zeile({ href: `#/entscheidungen/${x.id}`, art: "Entscheidung", titel: x.frage, unter: x.antwort === "intern" ? t("Sie klären das intern", "Du klärst das intern") : "", frist: fristHtml(x.frist), tun: "Entscheiden" }) })),
+      ...(a.data || []).map((x) => ({ frist: x.frist, seit: x.aktualisiert, html: zeile({ href: `#/aufgaben/${x.id}`, art: "Aufgabe", titel: x.titel, frist: fristHtml(x.frist), tun: "Öffnen" }) })),
+    ].sort((p, q) => sortFrist(p, q) || new Date(p.seit) - new Date(q.seit));
+    // Neu seit dem letzten Besuch, ohne Geöffnetes. Beim ersten Besuch: der letzte Montagsbrief und die letzte Terminnotiz.
+    const g = gesehen();
+    const neu = [];
+    const notiz = alle.find((r) => r.art === "terminnotiz");
+    for (const r of alle) {
+      const zeigen = erster ? (r === brief || r === notiz) : istNeu(r.freigegeben_am);
+      if (zeigen && !g.has(r.id)) neu.push({ z: r.freigegeben_am, html: zeile({ href: `#/berichte/${r.id}`, art: ART[r.art], titel: r.zeitraum, tun: "Lesen" }) });
     }
-    return `<article class="karte${kl}">${kopf}${rechts}</article>`;
+    const anl = Object.fromEntries((an.data || []).map((x) => [x.id, x]));
+    const schon = new Set();
+    for (const c of k.data || []) {
+      if (c.bezug_art !== "anliegen" || !istNeu(c.erstellt) || schon.has(c.bezug_id) || g.has("k:" + c.id) || !anl[c.bezug_id]) continue;
+      schon.add(c.bezug_id);
+      neu.push({ z: c.erstellt, html: zeile({ href: `#/anliegen/${c.bezug_id}`, art: "Anliegen", titel: anl[c.bezug_id].titel, unter: `${esc((c.autor_name || "").split(" ")[0])} hat geantwortet`, tun: "Öffnen" }) });
+    }
+    for (const x of d.data || []) if (istNeu(x.erstellt) && !g.has("d:" + x.id)) neu.push({ z: x.erstellt, html: zeile({ href: "#/dateien", art: "Datei", titel: x.notiz || x.name, tun: "Laden" }) });
+    neu.sort((p, q) => new Date(q.z) - new Date(p.z));
+    // Fehlt der Montagsbrief der letzten Woche (ab Montag 9 Uhr)?
+    const montag = montagDieserWoche(); const letzte = new Date(montag); letzte.setDate(montag.getDate() - 7);
+    const fehlt = brief && new Date(brief.zeitraum_start + "T12:00:00") < letzte && (Date.now() - montag.getTime() > 9 * 3600e3);
+    const hallo = du() ? `Hallo${vorname() ? " " + vorname() : ""}` : `Guten Tag${S.mitglied?.anzeigename ? " " + S.mitglied.anzeigename : ""}`;
+    let buehne;
+    if (erster || !brief) {
+      buehne = `<p class="standzeile">Kundenportal · ${esc(S.kunde.name)}</p><h1>${esc(hallo)}, hier ist ${t("Ihr", "dein")} Kundenportal.</h1>
+        <div class="lage"><p>Ab jetzt liegt hier jeden Montag um 9 Uhr der Montagsbrief, einmal im Monat die Monatsauswertung und nach jedem Termin die Terminnotiz.</p>
+        <p>Wenn wir eine Entscheidung von ${t("Ihnen", "dir")} brauchen, steht sie oben.</p><p>Fragen und Dateien ${t("können Sie", "kannst du")} hier einstellen. Mail und Termin gehen natürlich weiter.</p></div>
+        <p class="nach"><a class="textlink" href="#/wer-sieht-was">Wer sieht was?</a></p>`;
+    } else {
+      buehne = `<p class="standzeile">Stand ${esc(zeitraumText(brief))}</p><h1>${esc(hallo)}, das ist gerade los.</h1>
+        ${fehlt ? `<div class="notiz-gruen" role="status">${sym("info")}<p>Der Montagsbrief für KW ${kw(letzte)} kommt noch. Bis dahin steht hier der Stand aus ${esc(brief.zeitraum)}.</p></div>` : ""}
+        ${lage.length ? `<div class="lage">${lage.map((s) => `<p>${esc(s)}</p>`).join("")}</div>` : ""}
+        <p class="nach"><a class="textlink" href="#/berichte/${brief.id}">Zum Montagsbrief ${esc(brief.zeitraum)}</a></p>`;
+    }
+    rahmen({ titel: "Übersicht", aktiv: "", zaehler: z, buehne: { uebersicht: true, html: buehne }, inhalt: `
+      <section class="block" aria-labelledby="h-w"><h2 id="h-w">${t("Wartet auf Sie", "Wartet auf dich")}</h2>${wartet.length ? `<ul class="register fristen">${wartet.map((x) => x.html).join("")}</ul>` : leer(t("Diese Woche müssen Sie nichts tun.", "Diese Woche musst du nichts tun."))}</section>
+      <section class="block" aria-labelledby="h-n"><h2 id="h-n">${t("Neu für Sie", "Neu für dich")}</h2>${neu.length ? `<ul class="register">${neu.map((x) => x.html).join("")}</ul>` : leer(t("Seit Ihrem letzten Besuch ist nichts dazugekommen.", "Seit deinem letzten Besuch ist nichts dazugekommen."))}
+        <p class="nach"><a class="textlink" href="#/anliegen/neu">Neues Anliegen stellen</a></p></section>` });
   }
 
-  async function entscheidungen() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("entscheidungen").select("*").order("erstellt", { ascending: false }).order("nr")]);
-    const offen = (data || []).filter((d) => d.status === "offen");
-    const fertig = (data || []).filter((d) => d.status !== "offen");
-    rahmen(`<div class="label kicker">Entscheidungen</div><h1>${offen.length ? t("Was wir von Ihnen brauchen", "Was wir von dir brauchen") : "Gerade gibt es nichts zu entscheiden."}</h1>
-      ${offen.length ? `<p class="lead">Jede Entscheidung hat unsere Empfehlung als Satz. ${t("Ihre Antwort", "Deine Antwort")} kommt sofort bei uns an.</p><div class="karten">${offen.map((d) => entscheidungsKarte(d)).join("")}</div>` : ""}
-      ${fertig.length ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Bereits entschieden</h2></div><div class="karten">${fertig.map((d) => entscheidungsKarte(d)).join("")}</div></section>` : ""}`,
-      KUNDE_REITER, "entscheidungen", z);
-    app.querySelectorAll("form[data-ent]").forEach((f) => (f.onsubmit = async (ev) => {
-      ev.preventDefault();
-      const m = f.querySelector(".m");
-      const a = f.querySelector("input[name=a]:checked")?.value;
-      if (!a) return meldung(m, "Bitte Ja oder Nein wählen.");
-      const k = f.querySelector("button"); k.disabled = true; k.textContent = "Wird gesendet";
-      const { error } = await sb.rpc("entscheidung_beantworten", { p_id: f.dataset.ent, p_antwort: a, p_kommentar: f.k.value });
-      if (error) { k.disabled = false; k.textContent = "Entscheidung senden"; return meldung(m, fehlerText(error)); }
-      entscheidungen();
-    }));
+  // ---------- Kommentare (Kunde und Team) ----------
+  // Name, Rolle und Zeit setzt die Datenbank aus dem Zugang; die Oberfläche schickt nur den Text.
+  async function verlauf(art, id) {
+    const { data } = await sb.from("kommentare").select("id,text,autor_name,autor_rolle,erstellt").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
+    return data || [];
   }
-
-  async function aufgaben() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").order("frist", { nullsFirst: false })]);
-    const liste = (arr) => arr.length ? `<ul class="liste">${arr.map((x) => `<li><div><div class="titel"><a href="#/aufgaben/${x.id}">${esc(x.titel)}</a></div><div class="unter">${x.frist ? "bis " + datum(x.frist) : "ohne Frist"}</div></div></li>`).join("")}</ul>` : `<div class="leer">Nichts offen.</div>`;
-    const offen = (data || []).filter((x) => !x.erledigt);
-    const erledigt = (data || []).filter((x) => x.erledigt).slice(0, 20);
-    rahmen(`<div class="label kicker">Aufgaben</div><h1>Wer gerade was in der Hand hat</h1>
-      <div class="zwei-spalten abschnitt" style="margin-top:40px">
-        <section><div class="abschnitt-kopf"><h2>${t("Liegt bei Ihnen", "Liegt bei dir")}</h2></div>${liste(offen.filter((x) => x.liegt_bei === "kunde"))}</section>
-        <section><div class="abschnitt-kopf"><h2>Liegt bei uns</h2></div>${liste(offen.filter((x) => x.liegt_bei === "wir"))}</section>
-      </div>
-      ${erledigt.length ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Zuletzt erledigt</h2></div><ul class="liste">${erledigt.map((x) => `<li><div><div class="titel leise">${esc(x.titel)}</div></div></li>`).join("")}</ul></section>` : ""}`,
-      KUNDE_REITER, "aufgaben", z);
+  function komHtml(k) {
+    const team = k.autor_rolle === "team";
+    const neu = team && S.mitglied?.rolle !== "team" && istNeu(k.erstellt) && !gesehen().has("k:" + k.id);
+    return `<div class="kom${team ? " team" : ""}"><p class="wer"><b>${esc(k.autor_name || "")}</b>${team ? " · PPotthoff" : ""} · ${zeit(k.erstellt)}${neu ? ' <span class="marke neu">neu</span>' : ""}</p><p class="text">${esc(k.text)}</p></div>`;
   }
-
-  async function aufgabeAnzeigen(id) {
-    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").eq("id", id).maybeSingle()]);
-    if (!x) return rahmen(`<a class="zurueck" href="#/aufgaben">Alle Aufgaben</a><div class="leer">Diese Aufgabe gibt es nicht.</div>`, KUNDE_REITER, "aufgaben", z);
-    rahmen(`<a class="zurueck" href="#/aufgaben">Alle Aufgaben</a>
-      <div class="label kicker">Aufgabe · ${x.erledigt ? "erledigt" : x.liegt_bei === "kunde" ? t("liegt bei Ihnen", "liegt bei dir") : "liegt bei uns"}</div>
-      <h1 style="font-size:clamp(28px,3.4vw,38px)">${esc(x.titel)}</h1>${x.frist ? `<p class="leise" style="margin-top:8px">bis ${datum(x.frist)}</p>` : ""}
-      ${await kommentare("aufgabe", x.id, x.kunde_id)}`, KUNDE_REITER, "aufgaben", z);
-    kommentarVerdrahten(() => aufgabeAnzeigen(id));
+  async function kommentarBlock({ art, id, kundeId, titel = "Kommentare", feld, knopf = "Senden", zwei = false, leerText = "Noch keine Kommentare." }) {
+    const liste = await verlauf(art, id);
+    const html = liste.map(komHtml).join("");
+    if (S.mitglied?.rolle !== "team") liste.forEach((k) => { if (k.autor_rolle === "team") alsGesehen("k:" + k.id); });
+    return `<section class="antwort" aria-labelledby="h-k"><h2 id="h-k" class="frei">${esc(titel)}</h2><div class="verlauf" id="verlauf">${html || `<p class="leise neben">${esc(leerText)}</p>`}</div>
+      <form id="kf" class="lesespalte" data-art="${art}" data-id="${id}" data-kunde="${kundeId}" novalidate>
+        <label class="feld"><span>${esc(feld || t("Ihr Kommentar", "Dein Kommentar"))}</span><textarea name="text" rows="3" maxlength="5000" data-entwurf="kom:${art}:${id}"></textarea></label>
+        <button class="btn${zwei ? " zwei" : ""}" type="submit">${esc(knopf)}</button><div class="m"></div></form></section>`;
   }
-
-  // ---------- Anliegen ----------
-  async function anliegenSeite() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("id,titel,status,erstellt_name,erstellt,aktualisiert").order("aktualisiert", { ascending: false })]);
-    const zeile = (x) => `<li><div><div class="titel"><a href="#/anliegen/${x.id}">${esc(x.titel)}</a><span class="marke${x.status === "erledigt" ? " gruen" : ""}">${esc(ANLIEGEN_STATUS[x.status])}</span></div><div class="unter">${esc(x.erstellt_name || "")} · ${zeit(x.erstellt)}</div></div></li>`;
-    const offen = (data || []).filter((x) => x.status !== "erledigt");
-    const fertig = (data || []).filter((x) => x.status === "erledigt");
-    rahmen(`<div class="label kicker">Anliegen</div><h1>Fragen und Aufträge</h1>
-      <p class="lead">${t("Stellen Sie hier ein, was Sie von uns brauchen.", "Stell hier ein, was du von uns brauchst.")} Wir antworten im Anliegen, alles bleibt an einem Ort.</p>
-      <p style="margin-top:24px"><a class="btn" href="#/anliegen/neu">Neues Anliegen</a></p>
-      <section class="abschnitt" style="margin-top:48px"><div class="abschnitt-kopf"><h2>Offen</h2></div>${offen.length ? `<ul class="liste">${offen.map(zeile).join("")}</ul>` : `<div class="leer">Nichts offen.</div>`}</section>
-      ${fertig.length ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Erledigt</h2></div><ul class="liste">${fertig.slice(0, 30).map(zeile).join("")}</ul></section>` : ""}`,
-      KUNDE_REITER, "anliegen", z);
-  }
-
-  async function anliegenNeu() {
-    const z = await zaehlerKunde();
-    rahmen(`<a class="zurueck" href="#/anliegen">Alle Anliegen</a><div class="label kicker">Neues Anliegen</div><h1>Worum geht es?</h1>
-      <form id="af" novalidate style="max-width:720px;margin-top:32px">
-        <label class="feld"><span class="label">Betreff</span><input type="text" name="titel" maxlength="200" required placeholder="z. B. Black Friday Week: machen wir mit?"></label>
-        <label class="feld"><span class="label">Beschreibung</span><textarea name="text" rows="6" maxlength="10000"></textarea></label>
-        <p class="klein leise" style="margin:-4px 0 16px">Dateien ${t("können Sie", "kannst du")} danach unter Dateien hochladen.</p>
-        <button class="btn" type="submit">Anliegen senden</button><div class="m"></div></form>`, KUNDE_REITER, "anliegen", z);
-    const f = document.getElementById("af");
-    f.titel.focus();
+  function kommentarVerdrahten(nachher) {
+    const f = document.getElementById("kf");
+    if (!f) return;
     f.onsubmit = async (ev) => {
       ev.preventDefault();
-      const titel = f.titel.value.trim();
-      if (!titel) return meldung(f.querySelector(".m"), "Bitte einen Betreff eingeben.");
-      const k = f.querySelector("button"); k.disabled = true; k.textContent = "Wird gesendet";
-      const { data, error } = await sb.from("anliegen").insert({ kunde_id: S.kunde.id, titel, text: f.text.value.trim() || null }).select("id").single();
-      if (error) { k.disabled = false; k.textContent = "Anliegen senden"; return meldung(f.querySelector(".m"), fehlerText(error)); }
-      geh("anliegen/" + data.id);
+      const m = f.querySelector(".m");
+      const text = f.text.value.trim();
+      if (!text) { f.text.setAttribute("aria-invalid", "true"); return meldung(m, "Bitte einen Text eingeben."); }
+      f.text.removeAttribute("aria-invalid");
+      const k = f.querySelector("button"); const alt = k.textContent; k.disabled = true; k.textContent = "Wird gesendet";
+      const { data, error } = await sb.from("kommentare").insert({ kunde_id: f.dataset.kunde, bezug_art: f.dataset.art, bezug_id: f.dataset.id, text }).select("id,text,autor_name,autor_rolle,erstellt").single();
+      k.disabled = false; k.textContent = alt;
+      if (error) return meldung(m, fehlerText(error));
+      entwurfWeg(`kom:${f.dataset.art}:${f.dataset.id}`);
+      f.text.value = "";
+      const v = document.getElementById("verlauf");
+      if (v.querySelector("p.leise")) v.innerHTML = "";
+      v.insertAdjacentHTML("beforeend", komHtml(data));
+      meldung(m, "Gesendet. Wir antworten hier.", "ok");
+      if (nachher) nachher(data);
     };
   }
 
-  async function anliegenKopf(x) {
-    return `<div class="label kicker">Anliegen</div><h1 style="font-size:clamp(28px,3.4vw,38px)">${esc(x.titel)}</h1>
-      <div class="status">${esc(ANLIEGEN_STATUS[x.status])}</div>
-      <div class="kom" style="border-top:1px solid var(--ink);margin-top:22px"><div class="wer"><b>${esc(x.erstellt_name || "")}</b> · ${zeit(x.erstellt)}</div><div class="text">${x.text ? esc(x.text) : '<span class="leise">Ohne Beschreibung</span>'}</div></div>`;
-  }
-
-  async function anliegenAnzeigen(id) {
-    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("*").eq("id", id).maybeSingle()]);
-    if (!x) return rahmen(`<a class="zurueck" href="#/anliegen">Alle Anliegen</a><div class="leer">Dieses Anliegen gibt es nicht.</div>`, KUNDE_REITER, "anliegen", z);
-    rahmen(`<a class="zurueck" href="#/anliegen">Alle Anliegen</a>${await anliegenKopf(x)}${await kommentare("anliegen", x.id, x.kunde_id)}`, KUNDE_REITER, "anliegen", z);
-    kommentarVerdrahten(() => anliegenAnzeigen(id));
-  }
-
-  // ---------- Roadmap ----------
-  async function roadmapSeite() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("roadmap").select("*").order("reihenfolge").order("titel")]);
-    const gruppe = (st) => {
-      const arr = (data || []).filter((r) => r.status === st);
-      return arr.length ? `<section class="abschnitt" style="margin-top:40px"><div class="abschnitt-kopf"><h2>${ROADMAP_STATUS[st]}</h2></div><ul class="liste">${arr.map((r) => `<li><div><div class="titel">${esc(r.titel)}</div>${r.beschreibung ? `<div class="unter" style="margin-top:4px">${esc(r.beschreibung)}</div>` : ""}</div><div class="aktionen leise klein">${esc(r.zeitraum || "")}</div></li>`).join("")}</ul></section>` : "";
-    };
-    rahmen(`<div class="label kicker">Roadmap</div><h1>Was wir gemeinsam vorhaben</h1>
-      ${data?.length ? gruppe("laeuft") + gruppe("geplant") + gruppe("erledigt") : `<div class="leer" style="margin-top:32px">Die Roadmap wird gerade aufgebaut.</div>`}`,
-      KUNDE_REITER, "roadmap", z);
-  }
-
-  function dateiZeile(d, intern) {
+  // ---------- Dateien ----------
+  const dateiName = (d) => d.notiz || d.name;
+  const BEZUG = { aufgabe: ["aufgaben", "Aufgabe"], anliegen: ["anliegen", "Anliegen"], entscheidung: ["entscheidungen", "Entscheidung"] };
+  function dateiHtml(d, { bezug = true, intern = false } = {}) {
     const von = d.richtung === "vom_kunden" ? (intern ? "vom Kunden" : t("von Ihnen", "von dir")) : "von uns";
-    return `<li><div><div class="titel">${esc(d.name)}</div><div class="unter">${von} · ${zeit(d.erstellt)}${d.groesse ? " · " + groesse(d.groesse) : ""}${d.notiz ? " · " + esc(d.notiz) : ""}</div></div><div class="aktionen"><button class="text" data-datei="${esc(d.pfad)}" data-name="${esc(d.name)}">Laden</button></div></li>`;
-  }
-  function ablageForm(id) {
-    return `<form id="${id}" class="ablage" novalidate><label class="btn zwei" style="cursor:pointer">Dateien wählen<input type="file" name="d" multiple class="sr"></label>
-      <span class="klein leise" data-wahl>oder hierher ziehen (bis 100 MB je Datei)</span>
-      <input type="text" name="notiz" placeholder="Notiz (optional), z. B. wofür die Datei ist" style="flex:1;min-width:220px">
-      <button class="btn" type="submit">Hochladen</button><div class="m" style="flex-basis:100%"></div></form>`;
-  }
-  function ablageVerdrahten(id, kundeId, richtung, danach) {
-    const f = document.getElementById(id);
-    let dateien = [];
-    const zeige = () => (f.querySelector("[data-wahl]").textContent = dateien.length ? dateien.map((d) => d.name).join(", ") : "oder hierher ziehen (bis 100 MB je Datei)");
-    f.d.onchange = () => { dateien = [...f.d.files]; zeige(); };
-    ["dragenter", "dragover"].forEach((e) => f.addEventListener(e, (ev) => { ev.preventDefault(); f.classList.add("ziehen"); }));
-    ["dragleave", "drop"].forEach((e) => f.addEventListener(e, (ev) => { ev.preventDefault(); f.classList.remove("ziehen"); }));
-    f.addEventListener("drop", (ev) => { dateien = [...ev.dataTransfer.files]; zeige(); });
-    f.onsubmit = async (ev) => {
-      ev.preventDefault();
-      const m = f.querySelector(".m");
-      if (!dateien.length) return meldung(m, "Bitte zuerst eine Datei wählen.");
-      const k = f.querySelector("button[type=submit]"); k.disabled = true;
-      const ordner = richtung === "vom_kunden" ? "vom-kunden" : "von-uns";
-      try {
-        for (const d of dateien) {
-          if (d.size > 100 * 1024 * 1024) throw new Error(`${d.name} ist größer als 100 MB.`);
-          k.textContent = "Lädt " + d.name;
-          const sauber = d.name.normalize("NFKD").replace(/[^\w.\-]+/g, "_").slice(-120);
-          const pfad = `${kundeId}/${ordner}/${Date.now()}-${sauber}`;
-          const up = await sb.storage.from("dateien").upload(pfad, d, { contentType: d.type || "application/octet-stream" });
-          if (up.error) throw up.error;
-          const ins = await sb.from("dateien").insert({ kunde_id: kundeId, pfad, name: d.name, groesse: d.size, mime: d.type, richtung, notiz: f.notiz.value.trim() || null });
-          if (ins.error) throw ins.error;
-        }
-        danach();
-      } catch (e) { k.disabled = false; k.textContent = "Hochladen"; meldung(m, fehlerText(e)); }
-    };
+    const gehoert = bezug && !intern && d.bezug_art && BEZUG[d.bezug_art] ? ` · gehört zu: <a href="#/${BEZUG[d.bezug_art][0]}/${d.bezug_id}">${BEZUG[d.bezug_art][1]}</a>` : "";
+    const sicht = intern && S.g3 && d.richtung === "von_uns" ? ` · <span class="marke">${d.sichtbar ? "sichtbar" : "nicht sichtbar"}</span>` : "";
+    const frei = intern && S.g3 && d.richtung === "von_uns" && !d.sichtbar ? `<button class="text" type="button" data-sichtbar="${d.id}">Sichtbar machen</button>` : "";
+    return `<div class="datei${intern ? " intern" : ""}"><span class="wo">${sym("description")}<span class="n">${esc(dateiName(d))}<span class="u">${von} · ${zeit(d.erstellt)}${d.groesse ? " · " + groesse(d.groesse) : ""}${gehoert}${sicht}</span></span></span>
+      <span class="knopfzeile" style="margin:0">${frei}<button class="text" type="button" data-datei="${esc(d.pfad)}" data-name="${esc(d.name)}">Laden</button></span></div>`;
   }
   function dateiKnoepfe() {
     app.querySelectorAll("[data-datei]").forEach((k) => (k.onclick = async () => {
@@ -550,26 +464,358 @@
       k.disabled = false;
     }));
   }
+  function ablageHtml(id, { knopf = "Dateien wählen", notiz = false, senden = true } = {}) {
+    return `<div class="ablage" id="${id}"><div class="wahlzeile"><label class="btn zwei" style="cursor:pointer">${esc(knopf)}<input class="datei-eingabe" type="file" multiple></label><span class="neben leise" data-wahl></span></div>
+      ${notiz ? `<label class="feld"><span>Wofür ist die Datei? (wenn ${t("Sie mögen", "du magst")})</span><input type="text" name="notiz"></label>` : ""}
+      <p class="hinweis">bis 100 MB je Datei · am Laptop auch hierher ziehen</p>${senden ? `<div class="knopfzeile"><button class="btn" type="button" data-hoch>Hochladen</button></div>` : ""}<div class="m"></div></div>`;
+  }
+  // Lädt alle gewählten Dateien hoch. Scheitert eine, gehen die übrigen weiter.
+  async function hochladen(box, kundeId, richtung, bezug) {
+    const dateien = box._dateien || [];
+    const ordner = richtung === "vom_kunden" ? "vom-kunden" : "von-uns";
+    const ok = [], fehl = [];
+    for (const d of dateien) {
+      if (d.size > 100 * 1024 * 1024) { fehl.push(`<b>${esc(d.name)}</b> ist größer als 100 MB`); continue; }
+      const sauber = d.name.normalize("NFKD").replace(/[^\w.\-]+/g, "_").slice(-120);
+      const pfad = `${kundeId}/${ordner}/${Date.now()}-${sauber}`;
+      const up = await sb.storage.from("dateien").upload(pfad, d, { contentType: d.type || "application/octet-stream" });
+      if (up.error) { fehl.push(`<b>${esc(d.name)}</b> hat nicht geklappt`); continue; }
+      const zeile_ = { kunde_id: kundeId, pfad, name: d.name, groesse: d.size, mime: d.type, richtung, notiz: box.querySelector("[name=notiz]")?.value.trim() || null };
+      if (S.g3 && bezug) { zeile_.bezug_art = bezug[0]; zeile_.bezug_id = bezug[1]; }
+      const ins = await sb.from("dateien").insert(zeile_);
+      if (ins.error) fehl.push(`<b>${esc(d.name)}</b> hat nicht geklappt`); else ok.push(d.name);
+    }
+    return { ok, fehl };
+  }
+  function ablageVerdrahten(id, onSenden) {
+    const box = document.getElementById(id);
+    if (!box) return;
+    const input = box.querySelector("input[type=file]");
+    const zeige = () => (box.querySelector("[data-wahl]").textContent = (box._dateien || []).map((d) => d.name).join(", "));
+    input.onchange = () => { box._dateien = [...input.files]; zeige(); };
+    ["dragenter", "dragover"].forEach((e) => box.addEventListener(e, (ev) => { ev.preventDefault(); box.classList.add("ziehen"); }));
+    ["dragleave", "drop"].forEach((e) => box.addEventListener(e, (ev) => { ev.preventDefault(); box.classList.remove("ziehen"); }));
+    box.addEventListener("drop", (ev) => { box._dateien = [...ev.dataTransfer.files]; zeige(); });
+    const k = box.querySelector("[data-hoch]");
+    if (k) k.onclick = async () => {
+      const m = box.querySelector(".m");
+      if (!(box._dateien || []).length) return meldung(m, "Bitte zuerst eine Datei wählen.");
+      k.disabled = true; k.textContent = "Wird hochgeladen";
+      const r = await onSenden(box);
+      k.disabled = false; k.textContent = "Hochladen";
+      if (r) dateiErgebnis(m, r);
+    };
+  }
+  function dateiErgebnis(m, { ok, fehl }) {
+    const satz = ok.length === 1 ? `<b>${esc(ok[0])}</b> liegt jetzt bei uns.` : ok.length ? `${ok.length} Dateien liegen jetzt bei uns.` : "";
+    if (fehl.length) meldung(m, `${ok.length ? `<p><b>Angekommen.</b> ${satz}</p>` : ""}<p>${fehl.join(". ")}. Bitte noch einmal hochladen oder an ${KONTAKT} schreiben.</p>`, "fehler", true);
+    else meldung(m, `<p><b>Angekommen.</b> ${satz}</p>`, "ok", true);
+  }
+  async function dateienAm(art, id) {
+    if (!S.g3) return [];
+    const { data } = await sb.from("dateien").select("*").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
+    return data || [];
+  }
+  function alertLeise(text) {
+    const el = document.createElement("div");
+    (app.querySelector(".unten .wrap") || app).prepend(el);
+    meldung(el, text);
+  }
 
+  // ---------- Berichte ----------
+  async function berichte() {
+    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("berichte").select("id,art,titel,zeitraum,zeitraum_start,freigegeben_am").order("zeitraum_start", { ascending: false })]);
+    const gruppe = (art, h) => {
+      const liste = (data || []).filter((r) => r.art === art);
+      return liste.length ? `<section class="block"><h2>${h}</h2><ul class="register ohne-art">${liste.map((r) => zeile({ href: `#/berichte/${r.id}`, titel: zeitraumText(r), tun: "Lesen", mitArt: false })).join("")}</ul></section>` : "";
+    };
+    const inhalt = gruppe("wochenstand", "Montagsbriefe") + gruppe("monatsauswertung", "Monatsauswertungen") + gruppe("terminnotiz", "Terminnotizen");
+    rahmen({ titel: "Berichte", aktiv: "berichte", zaehler: z, buehne: buehneSeite({ titel: "Berichte", unter: t("Alles, was wir Ihnen geschickt haben", "Alles, was wir dir geschickt haben") }),
+      inhalt: inhalt || leer("Noch kein Bericht.") });
+  }
+
+  async function berichtAnzeigen(id, intern = false, werte = false) {
+    const { data: r, error } = await sb.from("berichte").select("*").eq("id", id).maybeSingle();
+    const z = intern ? await zaehlerIntern() : await zaehlerKunde();
+    const reiter = intern ? INTERN_REITER : null;
+    const zurueckPfad = intern ? "intern" : "berichte";
+    if (error || !r) {
+      return rahmen({ titel: "Bericht nicht gefunden", aktiv: zurueckPfad, reiter, zaehler: z, buehne: buehneSeite({ zurueck: [zurueckPfad, "Alle Berichte"], titel: "Bericht nicht gefunden" }), inhalt: `${leer("Diesen Bericht gibt es nicht.")}<p class="nach"><a class="textlink" href="#/${zurueckPfad}">Alle Berichte</a></p>` });
+    }
+    if (!intern) alsGesehen(r.id);
+    const basis = intern ? "intern/vorschau" : "berichte";
+    const pfad = werte && r.werte_pfad ? r.werte_pfad : r.html_pfad;
+    const titel = werte ? `Alle Werte ${r.zeitraum}` : berichtTitel(r);
+    const zurueck = werte ? [`${basis}/${r.id}`, `Zurück zum ${ART[r.art] || "Bericht"}`] : [zurueckPfad, "Alle Berichte"];
+    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">Alle Werte</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(titel)}.pdf">PDF laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
+    const komm = !intern && !werte ? await kommentarBlock({ art: "bericht", id: r.id, kundeId: r.kunde_id }) : "";
+    rahmen({ titel: werte ? "Alle Werte" : ART[r.art] || "Bericht", aktiv: zurueckPfad, reiter, zaehler: z,
+      buehne: buehneSeite({ zurueck, kennung: `${esc(ART[r.art] || "Bericht")} · ${esc(zeitraumText(r))}${intern ? ` · ${esc(r.status)}` : ""}`, titel }),
+      inhalt: `<div class="papier rahmen"><div class="laedt" id="ber-laedt" style="padding:24px"><p class="wort" role="status">${sym("schedule")}${esc(ART[r.art] || "Bericht")} wird geladen</p><div class="linie"></div></div><iframe id="ber" title="${esc(titel)}" sandbox="allow-same-origin" hidden></iframe></div>${knoepfe}${komm}` });
+    pdfKnoepfe();
+    if (intern) freigabeKnoepfe(); else kommentarVerdrahten();
+    try {
+      const html = await (await laden("berichte", pfad)).text();
+      const f = document.getElementById("ber");
+      if (!f) return;
+      f.onload = () => {
+        document.getElementById("ber-laedt")?.remove(); f.hidden = false;
+        const passe = () => { try { f.style.height = f.contentDocument.documentElement.scrollHeight + "px"; } catch { /* egal */ } };
+        passe(); setTimeout(passe, 300); setTimeout(passe, 1200);
+        window.addEventListener("resize", passe);
+      };
+      f.srcdoc = html;
+      if (!intern && !werte) sb.rpc("bericht_geoeffnet", { p_id: r.id }).then(() => {});
+    } catch (e) {
+      const l = document.getElementById("ber-laedt");
+      if (l) meldung(l, `${ART[r.art] || "Der Bericht"} hat nicht geladen. Bitte neu laden oder an ${KONTAKT} schreiben.`);
+    }
+  }
+  function pdfKnoepfe() {
+    app.querySelectorAll("[data-pdf]").forEach((k) => (k.onclick = async () => {
+      k.disabled = true;
+      try { await herunterladen("berichte", k.dataset.pdf, k.dataset.name); } catch (e) { alertLeise(fehlerText(e)); }
+      k.disabled = false;
+    }));
+  }
+
+  // ---------- Entscheidungen ----------
+  async function entscheidungen() {
+    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("entscheidungen").select("*").order("erstellt", { ascending: false })]);
+    const offen = (data || []).filter((d) => d.status === "offen").sort(sortFrist);
+    const fertig = (data || []).filter((d) => d.status !== "offen");
+    const zeileE = (d) => zeile({ href: `#/entscheidungen/${d.id}`, art: `Entscheidung${d.kategorie ? " · " + esc(d.kategorie) : ""}`, titel: d.frage,
+      unter: d.status === "offen" ? (d.antwort === "intern" ? t("Sie klären das intern", "Du klärst das intern") : `Unsere Empfehlung: ${esc(d.empfehlung)}`) : `${t("Ihre", "Deine")} Antwort: ${ANTWORT[d.antwort] || ""} · ${datum(d.beantwortet_am)} · ${d.status === "erledigt" ? "Erledigt" : "Angekommen"}`,
+      frist: d.status === "offen" ? fristHtml(d.frist) : "", tun: d.status === "offen" ? "Entscheiden" : "Öffnen" });
+    rahmen({ titel: "Entscheidungen", aktiv: "entscheidungen", zaehler: z,
+      buehne: buehneSeite({ titel: offen.length ? t("Was wir von Ihnen brauchen", "Was wir von dir brauchen") : "Gerade gibt es nichts zu entscheiden.", unter: offen.length ? `Bei jeder Frage steht unsere Empfehlung. ${t("Ihre", "Deine")} Antwort kommt sofort bei uns an.` : "" }),
+      inhalt: `${offen.length ? `<section class="block"><ul class="register fristen">${offen.map(zeileE).join("")}</ul></section>` : ""}
+        ${fertig.length ? `<section class="block"><h2>Bereits entschieden</h2><ul class="register">${fertig.map(zeileE).join("")}</ul></section>` : offen.length ? "" : leer("Noch keine Entscheidung.")}` });
+  }
+
+  async function entscheidungAnzeigen(id, fokus = null) {
+    const [z, { data: d }] = await Promise.all([zaehlerKunde(), sb.from("entscheidungen").select("*").eq("id", id).maybeSingle()]);
+    if (!d) return rahmen({ titel: "Entscheidung", aktiv: "entscheidungen", zaehler: z, buehne: buehneSeite({ zurueck: ["entscheidungen", "Alle Entscheidungen"], titel: "Entscheidung nicht gefunden" }), inhalt: leer("Diese Entscheidung gibt es nicht.") });
+    const dateien = await dateienAm("entscheidung", d.id);
+    const offen = d.status === "offen";
+    const kl = d.status === "offen" ? (d.antwort === "intern" ? " intern" : "") : d.antwort === "ja" ? " ja" : d.antwort === "nein" ? " nein" : "";
+    let unten;
+    if (d.status === "erledigt") unten = `<div class="meldung ok" role="status">${sym("check")}<p><b>Erledigt.</b> ${t("Ihre", "Deine")} Antwort vom ${datum(d.beantwortet_am)}: ${ANTWORT[d.antwort] || ""}.</p></div>`;
+    else if (d.status === "beantwortet") unten = `<div class="meldung ok" role="status" tabindex="-1" id="ent-meldung">${sym("check")}<div><p><b>Angekommen.</b> ${t("Ihre", "Deine")} Antwort: ${ANTWORT[d.antwort] || ""} · ${zeit(d.beantwortet_am)}</p><p class="neben">${t("Falsch gewählt? Schreiben Sie es unten als Frage.", "Falsch gewählt? Schreib es unten als Frage.")}</p></div></div>`;
+    else {
+      const optionen = ["ja", "nein", ...(S.g3 ? ["intern"] : [])];
+      unten = `${d.antwort === "intern" ? `<div class="meldung" role="status" tabindex="-1" id="ent-meldung">${sym("info")}<p>${t("Sie klären das intern. Wenn Sie so weit sind, antworten Sie einfach hier.", "Du klärst das intern. Wenn du so weit bist, antworte einfach hier.")}</p></div>` : ""}
+        <form id="ef" novalidate><fieldset><legend>${t("Ihre Antwort", "Deine Antwort")}</legend><div class="wahl" id="wahl"${optionen.length === 2 ? ' style="grid-template-columns:1fr 1fr"' : ""}>
+          ${optionen.map((o) => `<label><input type="radio" name="a" value="${o}"> ${ANTWORT[o]}</label>`).join("")}</div></fieldset>
+          <label class="feld"><span>${t("Kommentar, wenn Sie mögen", "Kommentar, wenn du magst")}</span><textarea name="k" rows="2" maxlength="5000" data-entwurf="ent:${d.id}"></textarea></label>
+          <button class="btn" type="submit">Antwort senden</button><div class="m" id="em"></div></form>`;
+    }
+    const komm = await kommentarBlock({ art: "entscheidung", id: d.id, kundeId: d.kunde_id, titel: "Fragen zu dieser Entscheidung", feld: t("Ihre Frage", "Deine Frage"), knopf: "Frage senden", zwei: true, leerText: "Noch keine Fragen." });
+    rahmen({ titel: "Entscheidung", aktiv: "entscheidungen", zaehler: z,
+      buehne: buehneSeite({ zurueck: ["entscheidungen", "Alle Entscheidungen"], kennung: `Entscheidung${d.kategorie ? " · " + esc(d.kategorie) : ""}`, titel: offen ? t("Was wir von Ihnen brauchen", "Was wir von dir brauchen") : "Entscheidung" }),
+      inhalt: `<article class="karte${kl}"><span class="art">Entscheidung${d.kategorie ? " · " + esc(d.kategorie) : ""}</span><p class="frage">${esc(d.frage)}</p>
+        <p><b>Unsere Empfehlung:</b> ${esc(d.empfehlung)}</p>${d.begruendung ? `<p class="grund">${esc(d.begruendung)}</p>` : ""}${d.wenn_nein ? `<p class="grund leise">Wenn nein: ${esc(d.wenn_nein)}</p>` : ""}
+        ${d.frist && offen ? `<p class="termin">${fristHtml(d.frist)}</p>` : ""}
+        ${dateien.map((x) => dateiHtml(x, { bezug: false })).join("")}
+        ${offen && S.g3 ? `<details class="kein-druck" style="margin-top:16px"><summary class="neben textlink" style="cursor:pointer">Datei hochladen</summary>${ablageHtml("ab")}</details>` : ""}
+        <div id="ent-unten">${unten}</div></article>${komm}` });
+    dateiKnoepfe(); kommentarVerdrahten();
+    ablageVerdrahten("ab", (box) => hochladen(box, d.kunde_id, "vom_kunden", ["entscheidung", d.id]));
+    if (fokus) { const el = document.getElementById("ent-meldung"); if (el) { el.scrollIntoView({ block: "center" }); el.focus({ preventScroll: true }); } }
+    const f = document.getElementById("ef");
+    if (!f) return;
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const m = document.getElementById("em");
+      const a = f.querySelector("input[name=a]:checked")?.value;
+      const wahl = document.getElementById("wahl");
+      if (!a) { wahl.classList.add("fehler"); return meldung(m, "Bitte eine Antwort wählen."); }
+      wahl.classList.remove("fehler");
+      const k = f.querySelector("button[type=submit]"); k.disabled = true; k.textContent = "Wird gesendet";
+      const { error } = await sb.rpc("entscheidung_beantworten", { p_id: d.id, p_antwort: a, p_kommentar: f.k.value });
+      k.disabled = false; k.textContent = "Antwort senden";
+      if (error) {
+        if (/nicht offen/i.test(error.message || "")) { S.fokusNachWechsel = false; return entscheidungAnzeigen(d.id, true); }
+        return meldung(m, t("Das hat nicht geklappt. Ihre Antwort ist noch nicht bei uns. Bitte noch einmal senden.", "Das hat nicht geklappt. Deine Antwort ist noch nicht bei uns. Bitte noch einmal senden."));
+      }
+      entwurfWeg("ent:" + d.id);
+      S.fokusNachWechsel = false; S.stehenBleiben = true;
+      await entscheidungAnzeigen(d.id, true);
+    };
+  }
+
+  // ---------- Aufgaben ----------
+  async function aufgaben() {
+    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").eq("erledigt", false)]);
+    const beiDir = (data || []).filter((x) => x.liegt_bei === "kunde").sort(sortFrist);
+    const beiUns = (data || []).filter((x) => x.liegt_bei === "wir").sort((p, q) => String(p.titel).localeCompare(q.titel, "de"));
+    rahmen({ titel: "Aufgaben", aktiv: "aufgaben", zaehler: z, buehne: buehneSeite({ titel: "Aufgaben", unter: "Wer gerade was in der Hand hat" }),
+      inhalt: `<section class="block"><h2>${t("Liegt bei Ihnen", "Liegt bei dir")}</h2>${beiDir.length ? `<ul class="register ohne-art fristen">${beiDir.map((x) => zeile({ href: `#/aufgaben/${x.id}`, titel: x.titel, frist: fristHtml(x.frist), mitArt: false })).join("")}</ul>` : leer(t("Gerade liegt nichts bei Ihnen.", "Gerade liegt nichts bei dir."))}</section>
+        <section class="block"><h2>Liegt bei uns</h2>${beiUns.length ? `<ul class="register ohne-art">${beiUns.map((x) => zeile({ href: `#/aufgaben/${x.id}`, titel: x.titel, mitArt: false })).join("")}</ul>` : leer("Gerade liegt nichts bei uns.")}
+        <p class="nach">Fehlt etwas? <a class="textlink" href="#/anliegen/neu">${t("Stellen Sie es als Anliegen ein.", "Stell es als Anliegen ein.")}</a></p></section>` });
+  }
+
+  async function aufgabeAnzeigen(id) {
+    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").eq("id", id).maybeSingle()]);
+    if (!x || x.erledigt) return rahmen({ titel: "Aufgabe", aktiv: "aufgaben", zaehler: z, buehne: buehneSeite({ zurueck: ["aufgaben", "Alle Aufgaben"], titel: "Diese Aufgabe ist erledigt." }), inhalt: `<p><a class="textlink" href="#/">Zur Übersicht</a></p>` });
+    const beiDir = x.liegt_bei === "kunde";
+    const dateien = await dateienAm("aufgabe", x.id);
+    const komm = await kommentarBlock({ art: "aufgabe", id: x.id, kundeId: x.kunde_id, zwei: true });
+    const liste = (arr) => arr.length ? `<h2 class="frei" style="margin-top:24px">${t("Von Ihnen geschickt", "Von dir geschickt")}</h2>${arr.map((d) => dateiHtml(d, { bezug: false })).join("")}` : "";
+    rahmen({ titel: "Aufgabe", aktiv: "aufgaben", zaehler: z,
+      buehne: buehneSeite({ zurueck: ["aufgaben", "Alle Aufgaben"], kennung: `Aufgabe · ${beiDir ? t("Liegt bei Ihnen", "Liegt bei dir") : "Liegt bei uns"}`, titel: x.titel, unter: x.frist && beiDir ? `bis ${datum(x.frist)}` : "" }),
+      inhalt: `<div class="lesespalte">${S.g3 && x.satz ? `<p class="absatz">${esc(x.satz)}</p>` : ""}<div id="dateiliste">${liste(dateien)}</div>
+        ${beiDir && S.g3 ? `<h2 class="frei" style="margin-top:32px">Datei schicken</h2>${ablageHtml("ab")}` : ""}</div>${komm}` });
+    dateiKnoepfe(); kommentarVerdrahten();
+    ablageVerdrahten("ab", async (box) => {
+      const r = await hochladen(box, x.kunde_id, "vom_kunden", ["aufgabe", x.id]);
+      if (r.ok.length) {
+        document.getElementById("dateiliste").innerHTML = liste(await dateienAm("aufgabe", x.id));
+        dateiKnoepfe(); box._dateien = []; box.querySelector("[data-wahl]").textContent = "";
+      }
+      if (r.ok.length && !r.fehl.length) { meldung(box.querySelector(".m"), `<p><b>Angekommen.</b> ${r.ok.length === 1 ? "Die Datei liegt" : `${r.ok.length} Dateien liegen`} jetzt bei uns. Wir prüfen sie und melden uns hier.</p>`, "ok", true); return null; }
+      return r;
+    });
+  }
+
+  // ---------- Anliegen ----------
+  async function anliegenSeite() {
+    const [z, { data }, { data: komm }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("id,titel,status,erstellt_name,erstellt,aktualisiert").order("aktualisiert", { ascending: false }),
+      sb.from("kommentare").select("bezug_id,autor_name,autor_rolle,erstellt").eq("bezug_art", "anliegen").order("erstellt", { ascending: false }).limit(300)]);
+    const letzte = {};
+    for (const c of komm || []) if (!letzte[c.bezug_id]) letzte[c.bezug_id] = c;
+    const z_ = (x) => {
+      const l = letzte[x.id];
+      return zeile({ href: `#/anliegen/${x.id}`, art: `<span class="marke">${ANLIEGEN_STATUS[x.status]}</span>`, titel: x.titel,
+        unter: `${esc(x.erstellt_name || "")} · ${datum(x.erstellt)}${l && l.autor_rolle === "team" ? ` · ${esc((l.autor_name || "").split(" ")[0])} hat geantwortet` : ""}` });
+    };
+    const offen = (data || []).filter((x) => x.status !== "erledigt");
+    const fertig = (data || []).filter((x) => x.status === "erledigt").slice(0, 30);
+    rahmen({ titel: "Anliegen", aktiv: "anliegen", zaehler: z, buehne: buehneSeite({ titel: "Anliegen", unter: t("Was Sie von uns brauchen", "Was du von uns brauchst") }),
+      inhalt: `<p class="absatz">Frage oder Auftrag: ${t("Stellen Sie es hier ein", "Stell es hier ein")}. Wir antworten hier. Mail und Termin gehen natürlich weiter.</p>
+        <div class="knopfzeile"><a class="btn" href="#/anliegen/neu">Neues Anliegen</a></div>
+        <section class="block" style="margin-top:32px"><h2>Laufend</h2>${offen.length ? `<ul class="register">${offen.map(z_).join("")}</ul>` : leer("Gerade läuft kein Anliegen.")}</section>
+        ${fertig.length ? `<section class="block"><h2>Erledigt</h2><ul class="register">${fertig.map(z_).join("")}</ul></section>` : ""}` });
+  }
+
+  async function anliegenNeu() {
+    const z = await zaehlerKunde();
+    rahmen({ titel: "Neues Anliegen", aktiv: "anliegen", zaehler: z, buehne: buehneSeite({ zurueck: ["anliegen", "Alle Anliegen"], titel: "Neues Anliegen", unter: "Worum geht es?" }),
+      inhalt: `<form id="af" class="lesespalte" novalidate>
+        <label class="feld" style="margin-top:0"><span>Betreff</span><input type="text" name="titel" maxlength="200" placeholder="z. B. Amazon schreibt wegen eines Artikels" data-entwurf="anliegen:titel" aria-describedby="f-betreff"></label><div id="f-betreff"></div>
+        <label class="feld"><span>Beschreibung</span><textarea name="text" rows="6" maxlength="10000" data-entwurf="anliegen:text"></textarea></label>
+        ${S.g3 ? ablageHtml("ab", { knopf: "Datei anhängen", senden: false }) : ""}
+        <button class="btn" type="submit">Anliegen senden</button><div class="m" id="am"></div></form>` });
+    const f = document.getElementById("af");
+    ablageVerdrahten("ab", () => null);
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const titel = f.titel.value.trim();
+      const fb = document.getElementById("f-betreff");
+      if (!titel) { f.titel.setAttribute("aria-invalid", "true"); fb.innerHTML = `<p class="feldfehler" role="alert">${sym("error")}Bitte einen Betreff eingeben.</p>`; f.titel.focus(); return; }
+      f.titel.removeAttribute("aria-invalid"); fb.innerHTML = "";
+      const k = f.querySelector("button[type=submit]"); k.disabled = true; k.textContent = "Wird gesendet";
+      const { data, error } = await sb.from("anliegen").insert({ kunde_id: S.kunde.id, titel, text: f.text.value.trim() || null }).select("id").single();
+      if (error) { k.disabled = false; k.textContent = "Anliegen senden"; return meldung(document.getElementById("am"), fehlerText(error)); }
+      entwurfWeg("anliegen:titel"); entwurfWeg("anliegen:text");
+      let dateiFehler = null;
+      const box = document.getElementById("ab");
+      if (box && (box._dateien || []).length) { const r = await hochladen(box, S.kunde.id, "vom_kunden", ["anliegen", data.id]); if (r.fehl.length) dateiFehler = r; }
+      S.nachSenden = { id: data.id, dateiFehler };
+      geh("anliegen/" + data.id);
+    };
+  }
+
+  async function anliegenAnzeigen(id) {
+    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("*").eq("id", id).maybeSingle()]);
+    if (!x) return rahmen({ titel: "Anliegen", aktiv: "anliegen", zaehler: z, buehne: buehneSeite({ zurueck: ["anliegen", "Alle Anliegen"], titel: "Anliegen nicht gefunden" }), inhalt: leer("Dieses Anliegen gibt es nicht.") });
+    const dateien = await dateienAm("anliegen", x.id);
+    const komm = await kommentarBlock({ art: "anliegen", id: x.id, kundeId: x.kunde_id, titel: "Antworten" });
+    const ns = S.nachSenden?.id === x.id ? S.nachSenden : null; S.nachSenden = null;
+    if (ns) S.fokusNachWechsel = false;
+    rahmen({ titel: "Anliegen", aktiv: "anliegen", zaehler: z,
+      buehne: buehneSeite({ zurueck: ["anliegen", "Alle Anliegen"], kennung: `Anliegen · <b>${ANLIEGEN_STATUS[x.status]}</b>`, titel: x.titel }),
+      inhalt: `<div id="gesendet"></div><div class="verlauf"><div class="kom"><p class="wer"><b>${esc(x.erstellt_name || "")}</b>${x.erstellt_rolle === "team" ? " · PPotthoff" : ""} · ${zeit(x.erstellt)}</p>
+        ${x.text ? `<p class="text">${esc(x.text)}</p>` : ""}${dateien.map((d) => dateiHtml(d, { bezug: false })).join("")}</div></div>${komm}` });
+    dateiKnoepfe(); kommentarVerdrahten();
+    if (ns) {
+      const g = document.getElementById("gesendet");
+      if (ns.dateiFehler) meldung(g, `<p>${t("Ihr", "Dein")} Anliegen ist angekommen. Die Datei hat nicht geklappt. Bitte unter Dateien noch einmal hochladen.</p>`, "fehler", true);
+      else meldung(g, t("Ihr Anliegen ist angekommen.", "Dein Anliegen ist angekommen."), "ok");
+    }
+  }
+
+  // ---------- Dateien ----------
   async function dateienSeite() {
     const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("dateien").select("*").order("erstellt", { ascending: false })]);
-    rahmen(`<div class="label kicker">Dateien</div><h1>Austausch in beide Richtungen</h1>
-      <p class="lead">Datenblätter, Bilder, Freigaben: was ${t("Sie hier hochladen", "du hier hochlädst")}, liegt sofort bei uns.</p>
-      ${ablageForm("ab")}
-      <section class="abschnitt"><div class="abschnitt-kopf"><h2>Alle Dateien</h2></div>${data?.length ? `<ul class="liste">${data.map((d) => dateiZeile(d, false)).join("")}</ul>` : `<div class="leer">Noch keine Dateien.</div>`}</section>`,
-      KUNDE_REITER, "dateien", z);
-    ablageVerdrahten("ab", S.kunde.id, "vom_kunden", dateienSeite);
+    rahmen({ titel: "Dateien", aktiv: "dateien", zaehler: z, buehne: buehneSeite({ titel: "Dateien", unter: t("Was Sie uns schicken und was wir Ihnen schicken", "Was du uns schickst und was wir dir schicken") }),
+      inhalt: `<p class="absatz">Was ${t("Sie hier hochladen", "du hier hochlädst")}, liegt sofort bei uns.</p>${ablageHtml("ab", { notiz: true })}
+        <section class="block" style="margin-top:48px"><h2>Alle Dateien</h2><div id="dateiliste">${data?.length ? data.map((d) => dateiHtml(d)).join("") : leer("Noch keine Dateien.")}</div></section>` });
+    (data || []).filter((d) => d.richtung === "von_uns").forEach((d) => alsGesehen("d:" + d.id));
     dateiKnoepfe();
+    ablageVerdrahten("ab", async (box) => {
+      const r = await hochladen(box, S.kunde.id, "vom_kunden", null);
+      if (r.ok.length) {
+        const { data: neu } = await sb.from("dateien").select("*").order("erstellt", { ascending: false });
+        document.getElementById("dateiliste").innerHTML = (neu || []).map((d) => dateiHtml(d)).join("");
+        dateiKnoepfe(); box._dateien = []; box.querySelector("[data-wahl]").textContent = "";
+      }
+      return r;
+    });
   }
 
+  // ---------- Roadmap, Werkzeuge, Wer sieht was ----------
+  const ROADMAP_STATUS = { laeuft: "Läuft", geplant: "Als Nächstes", spaeter: "Später" };
+  async function roadmapSeite() {
+    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("roadmap").select("*").neq("status", "erledigt").order("reihenfolge").order("titel")]);
+    const stand = S.g3 ? (data || []).map((r) => r.stand).filter(Boolean).sort().pop() : null;
+    const gruppe = (st) => {
+      const arr = (data || []).filter((r) => r.status === st);
+      return arr.length ? `<section class="block"><h2>${ROADMAP_STATUS[st]}</h2><ul class="register ohne-art">${arr.map((r) => `<li><div class="zeile"><span class="titel">${esc(r.titel)}</span>${r.beschreibung ? `<span class="unter">${esc(r.beschreibung)}</span>` : ""}${r.zeitraum ? `<span class="frist" style="font-size:var(--t-neben);font-family:var(--sans)">${esc(r.zeitraum)}</span>` : '<span class="frist"></span>'}<span></span></div></li>`).join("")}</ul></section>` : "";
+    };
+    rahmen({ titel: "Roadmap", aktiv: "roadmap", zaehler: z, buehne: buehneSeite({ titel: "Roadmap", unter: `Was wir gemeinsam vorhaben${stand ? ` · Stand ${datum(stand)}` : ""}` }),
+      inhalt: data?.length ? gruppe("laeuft") + gruppe("geplant") + gruppe("spaeter") : leer("Die Roadmap wird gerade aufgebaut.") });
+  }
   async function werkzeuge() {
     const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("werkzeuge").select("*").order("reihenfolge")]);
-    rahmen(`<div class="label kicker">Werkzeuge</div><h1>Werkzeuge von PPotthoff</h1>
-      ${data?.length ? `<ul class="liste" style="margin-top:32px">${data.map((w) => `<li><div><div class="titel">${esc(w.titel)}</div>${w.beschreibung ? `<div class="unter">${esc(w.beschreibung)}</div>` : ""}</div><div class="aktionen"><a class="btn zwei" href="${esc(w.url)}" target="_blank" rel="noopener noreferrer">Öffnen</a></div></li>`).join("")}</ul>`
-        : `<div class="leer">Für ${t("Sie", "dich")} sind noch keine Werkzeuge eingerichtet.</div>`}`,
-      KUNDE_REITER, "werkzeuge", z);
+    rahmen({ titel: "Werkzeuge", aktiv: "werkzeuge", zaehler: z, buehne: buehneSeite({ titel: "Werkzeuge", unter: "Werkzeuge von PPotthoff" }),
+      inhalt: data?.length ? `<ul class="register ohne-art">${data.map((w) => `<li><a href="${esc(w.url)}" target="_blank" rel="noopener noreferrer"><span class="titel">${esc(w.titel)}</span>${w.beschreibung ? `<span class="unter">${esc(w.beschreibung)}</span>` : ""}<span class="frist"></span><span class="tun">Öffnen</span></a></li>`).join("")}</ul>` : leer(`Für ${t("Sie", "dich")} sind noch keine Werkzeuge eingerichtet.`) });
+  }
+  async function werSiehtWas() {
+    const team = S.mitglied?.rolle === "team";
+    const z = team ? {} : await zaehlerKunde();
+    const name = team ? "den Kunden" : S.kunde?.name || "";
+    rahmen({ titel: "Wer sieht was?", aktiv: "wer-sieht-was", zaehler: z, reiter: team ? INTERN_REITER : null, buehne: buehneSeite({ titel: "Wer sieht was?" }),
+      inhalt: `<div class="lesespalte"><p class="absatz">Das Portal läuft auf Servern in Frankfurt am Main. Sehen können es nur die Personen, die wir für ${esc(name)} freigeschaltet haben, und unser Team.</p>
+        <p class="absatz">Dateien, die ${t("Sie hochladen", "du hochlädst")}, legen wir zusätzlich in unserer Ablage für ${esc(name)} ab.</p>
+        <p class="absatz">Angemeldet wird mit Mail-Adresse und einem Code, der zehn Minuten gilt. Ein Passwort gibt es nicht.</p>
+        <p class="neben leise">Fragen dazu? <a href="mailto:${KONTAKT}">${KONTAKT}</a></p></div>` });
   }
 
+  // ---------- Interner Bereich: Hilfen (nicht gestaltet, übernimmt portal.css) ----------
+  function rahmenAlt(inhalt, reiter, aktiv, z = {}) { const e = (reiter || []).find(([p]) => p === aktiv); rahmen({ titel: e ? e[1] : "Interner Bereich", aktiv, reiter, zaehler: z, inhalt }); }
+  const ROADMAP_STATUS_INTERN = { laeuft: "Läuft", geplant: "Als Nächstes", spaeter: "Später", erledigt: "Erledigt" };
+  function berichtZeile(r) {
+    const marke = r.status === "freigegeben" ? '<span class="marke gruen">freigegeben</span>' : r.status === "entwurf" ? '<span class="marke">Entwurf</span>' : '<span class="marke rot">zurückgezogen</span>';
+    const pdf = r.pdf_pfad ? `<button class="text" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(r.titel)}.pdf">PDF</button>` : "";
+    const frei = r.status === "freigegeben" ? `<button class="text" data-zurueck="${r.id}">Zurückziehen</button>` : `<button class="btn" data-frei="${r.id}">Freigeben</button>`;
+    return `<li><div><div class="titel">${esc(r.titel)} ${marke}</div><div class="unter">${ART[r.art] || r.art} · ${esc(zeitraumText(r))}${r.freigegeben_am ? " · freigegeben am " + datum(r.freigegeben_am) : ""}</div></div><div class="aktionen"><a href="#/intern/vorschau/${r.id}">Vorschau</a>${pdf}${frei}</div></li>`;
+  }
+  function entscheidungsKarte(d) {
+    const kl = d.antwort === "ja" ? " ja" : d.antwort === "nein" ? " nein" : d.antwort === "intern" ? " intern" : "";
+    let stand;
+    if (d.status === "entwurf") stand = d.bericht_id ? "Entwurf, sichtbar nach Freigabe des Berichts" : `Entwurf <button class="btn" data-ent-frei="${d.id}">Für den Kunden freigeben</button>`;
+    else if (d.status === "offen") stand = d.antwort === "intern" ? `Kunde klärt intern (${esc(d.beantwortet_von || "")}, ${zeit(d.beantwortet_am)})${d.kommentar ? ` · „${esc(d.kommentar)}“` : ""}` : "offen beim Kunden";
+    else stand = `<b>${ANTWORT[d.antwort] || ""}</b>, ${esc(d.beantwortet_von || "")} am ${zeit(d.beantwortet_am)}${d.kommentar ? ` · „${esc(d.kommentar)}“` : ""}${d.status === "erledigt" ? " · übernommen" : ` <button class="text" data-erledigt="${d.id}">Als übernommen markieren</button>`}`;
+    return `<article class="karte${kl}" style="margin-top:16px"><span class="art">${esc(d.kategorie || "Entscheidung")}${d.frist ? " · bis " + esc(d.frist) : ""}</span><p class="frage">${esc(d.frage)}</p><p><b>Unsere Empfehlung:</b> ${esc(d.empfehlung)}</p><p class="neben" style="margin-top:12px">${stand}</p></article>`;
+  }
+  async function anliegenKopf(x) {
+    return `<p class="kennung" style="color:var(--ink-soft)">Anliegen · <b style="color:var(--ink)">${ANLIEGEN_STATUS[x.status]}</b></p><h1 style="font-size:var(--t-h1-seite)">${esc(x.titel)}</h1>
+      <div class="verlauf"><div class="kom"><p class="wer"><b>${esc(x.erstellt_name || "")}</b> · ${zeit(x.erstellt)}</p><p class="text">${x.text ? esc(x.text) : '<span class="leise">Ohne Beschreibung</span>'}</p></div></div>`;
+  }
+  function ablageVerdrahtenIntern(id, kundeId, richtung, danach) {
+    ablageVerdrahten(id, async (box) => { const r = await hochladen(box, kundeId, richtung, null); if (r.ok.length && !r.fehl.length) { danach(); return null; } return r; });
+  }
   // ---------- Interner Bereich ----------
   const INTERN_REITER = [["intern", "Berichte"], ["intern/entscheidungen", "Antworten"], ["intern/anliegen", "Anliegen"], ["intern/dateien", "Dateien"], ["intern/aufgaben", "Aufgaben"], ["intern/roadmap", "Roadmap"], ["intern/werkzeuge", "Werkzeuge"], ["intern/zugaenge", "Zugänge"], ["intern/protokoll", "Protokoll"]];
   function kundenwahl() {
@@ -616,9 +862,9 @@
 
   async function internBerichte() {
     const k = S.internKunde;
-    if (!k) return rahmen(`<h1>Noch keine Kunden</h1>`, INTERN_REITER, "intern");
+    if (!k) return rahmenAlt(`<h1>Noch keine Kunden</h1>`, INTERN_REITER, "intern");
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("berichte").select("*").eq("kunde_id", k.id).order("zeitraum_start", { ascending: false }).order("art")]);
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Berichte freigeben</h1><p class="lead">Neue Berichte kommen als Entwurf. Der Kunde sieht sie erst nach der Freigabe; die Entscheidungen des Berichts werden dann mit geöffnet.</p>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Berichte freigeben · ${esc(k.name)}</h1><p class="lead">Neue Berichte kommen als Entwurf. Der Kunde sieht sie erst nach der Freigabe; die Entscheidungen des Berichts werden dann mit geöffnet.</p>
       <div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<ul class="liste">${data.map((r) => berichtZeile(r, true)).join("")}</ul>` : `<div class="leer">Für ${esc(k.name)} liegt noch kein Bericht.</div>`}`,
       INTERN_REITER, "intern", z);
@@ -630,11 +876,17 @@
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("entscheidungen").select("*").eq("kunde_id", k.id).order("erstellt", { ascending: false }).order("nr")]);
     const neu = (data || []).filter((d) => d.status === "beantwortet");
     const rest = (data || []).filter((d) => d.status !== "beantwortet");
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Antworten der Kunden</h1><div style="margin-top:32px">${kundenwahl()}</div>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Antworten der Kunden</h1><div style="margin-top:32px">${kundenwahl()}</div>
       ${neu.length ? `<h2>Neu beantwortet</h2><div class="karten">${neu.map((d) => entscheidungsKarte(d, true)).join("")}</div>` : `<div class="leer">Keine neuen Antworten von ${esc(k.name)}.</div>`}
       ${rest.length ? `<section class="abschnitt"><div class="abschnitt-kopf"><h2>Alle übrigen</h2></div><div class="karten">${rest.map((d) => entscheidungsKarte(d, true)).join("")}</div></section>` : ""}`,
       INTERN_REITER, "intern/entscheidungen", z);
     kundenwahlVerdrahten(internEntscheidungen);
+    app.querySelectorAll("[data-ent-frei]").forEach((b) => (b.onclick = async () => {
+      if (!confirmLeise(b, `${k.name} sieht die Entscheidung danach sofort.`)) return;
+      const { error } = await sb.from("entscheidungen").update({ status: "offen" }).eq("id", b.dataset.entFrei);
+      if (error) return alertLeise(fehlerText(error));
+      internEntscheidungen();
+    }));
     app.querySelectorAll("[data-erledigt]").forEach((b) => (b.onclick = async () => {
       const { error } = await sb.from("entscheidungen").update({ status: "erledigt" }).eq("id", b.dataset.erledigt);
       if (error) return alertLeise(fehlerText(error));
@@ -645,19 +897,25 @@
   async function internDateien() {
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("dateien").select("*").eq("kunde_id", k.id).order("erstellt", { ascending: false })]);
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Dateien</h1><div style="margin-top:32px">${kundenwahl()}</div>
-      <h2>Für ${esc(k.name)} bereitstellen</h2>${ablageForm("ab")}
-      <section class="abschnitt"><div class="abschnitt-kopf"><h2>Alle Dateien</h2></div>${data?.length ? `<ul class="liste">${data.map((d) => dateiZeile(d, true)).join("")}</ul>` : `<div class="leer">Noch keine Dateien.</div>`}</section>`,
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Dateien</h1><div style="margin-top:32px">${kundenwahl()}</div>
+      <h2>Für ${esc(k.name)} bereitstellen</h2>${ablageHtml("ab", { notiz: true })}
+      <section class="abschnitt"><div class="abschnitt-kopf"><h2>Alle Dateien</h2></div>${data?.length ? `<ul class="liste">${data.map((d) => dateiHtml(d, { intern: true })).join("")}</ul>` : `<div class="leer">Noch keine Dateien.</div>`}</section>`,
       INTERN_REITER, "intern/dateien", z);
     kundenwahlVerdrahten(internDateien);
-    ablageVerdrahten("ab", k.id, "von_uns", internDateien);
+    ablageVerdrahtenIntern("ab", k.id, "von_uns", internDateien);
+    app.querySelectorAll("[data-sichtbar]").forEach((b) => (b.onclick = async () => {
+      if (!confirmLeise(b, `${k.name} sieht die Datei danach sofort.`)) return;
+      const { error } = await sb.from("dateien").update({ sichtbar: true }).eq("id", b.dataset.sichtbar);
+      if (error) return alertLeise(fehlerText(error));
+      internDateien();
+    }));
     dateiKnoepfe();
   }
 
   async function internAufgaben() {
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("aufgaben").select("*").eq("kunde_id", k.id).order("frist", { nullsFirst: false })]);
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Aufgaben in der Kundensicht</h1>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Aufgaben in der Kundensicht</h1>
       <p class="lead">Hier erscheinen nur Trello-Karten mit dem Label „Kunde sieht“: Titel, wer sie in der Hand hat, Frist. Gepflegt wird in Trello.</p><div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<table class="protokoll"><thead><tr><th>Aufgabe</th><th>Liegt bei</th><th>Frist</th><th>Status</th></tr></thead><tbody>${data.map((x) => `<tr><td>${esc(x.titel)}</td><td>${x.liegt_bei === "kunde" ? "Kunde" : "uns"}</td><td>${datum(x.frist)}</td><td>${x.erledigt ? "erledigt" : "offen"}</td></tr>`).join("")}</tbody></table>` : `<div class="leer">Noch keine Karten mit „Kunde sieht“ für ${esc(k.name)}.</div>`}`,
       INTERN_REITER, "intern/aufgaben", z);
@@ -667,7 +925,7 @@
   async function internWerkzeuge() {
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("werkzeuge").select("*").eq("kunde_id", k.id).order("reihenfolge")]);
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Werkzeuge</h1><div style="margin-top:32px">${kundenwahl()}</div>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Werkzeuge</h1><div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<ul class="liste">${data.map((w) => `<li><div><div class="titel">${esc(w.titel)}${w.aktiv ? "" : '<span class="marke">aus</span>'}</div><div class="unter">${esc(w.beschreibung || "")}</div></div><div class="aktionen"><button class="text" data-umschalten="${w.id}" data-aktiv="${w.aktiv}">${w.aktiv ? "Ausblenden" : "Einblenden"}</button></div></li>`).join("")}</ul>` : `<div class="leer">Noch keine Werkzeuge für ${esc(k.name)}.</div>`}
       <section class="abschnitt"><div class="abschnitt-kopf"><h2>Werkzeug hinzufügen</h2></div>
       <form id="wf" novalidate style="max-width:560px;margin-top:16px"><label class="feld"><span class="label">Name</span><input type="text" name="titel" required></label>
@@ -693,7 +951,7 @@
   async function internAnliegen() {
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("anliegen").select("*").eq("kunde_id", k.id).order("aktualisiert", { ascending: false })]);
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Anliegen der Kunden</h1><div style="margin-top:32px">${kundenwahl()}</div>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Anliegen der Kunden</h1><div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<ul class="liste">${data.map((x) => `<li><div><div class="titel"><a href="#/intern/anliegen/${x.id}">${esc(x.titel)}</a><span class="marke${x.status === "offen" ? " rot" : x.status === "erledigt" ? " gruen" : ""}">${esc(ANLIEGEN_STATUS[x.status])}</span></div><div class="unter">${esc(x.erstellt_name || "")} · ${zeit(x.erstellt)} · zuletzt ${zeit(x.aktualisiert)}</div></div></li>`).join("")}</ul>` : `<div class="leer">Keine Anliegen von ${esc(k.name)}.</div>`}`,
       INTERN_REITER, "intern/anliegen", z);
     kundenwahlVerdrahten(internAnliegen);
@@ -701,24 +959,24 @@
 
   async function internAnliegenAnzeigen(id) {
     const [z, { data: x }] = await Promise.all([zaehlerIntern(), sb.from("anliegen").select("*").eq("id", id).maybeSingle()]);
-    if (!x) return rahmen(`<a class="zurueck" href="#/intern/anliegen">Alle Anliegen</a><div class="leer">Dieses Anliegen gibt es nicht.</div>`, INTERN_REITER, "intern/anliegen", z);
+    if (!x) return rahmenAlt(`<a class="zurueck" href="#/intern/anliegen">Alle Anliegen</a><div class="leer">Dieses Anliegen gibt es nicht.</div>`, INTERN_REITER, "intern/anliegen", z);
     const wahl = Object.entries(ANLIEGEN_STATUS).map(([w, n]) => `<option value="${w}" ${w === x.status ? "selected" : ""}>${n}</option>`).join("");
-    rahmen(`<a class="zurueck" href="#/intern/anliegen">Alle Anliegen</a>${await anliegenKopf(x)}
+    rahmenAlt(`<a class="zurueck" href="#/intern/anliegen">Alle Anliegen</a>${await anliegenKopf(x)}
       <div class="leiste" style="margin-top:20px"><label class="feld"><span class="label">Status ändern</span><select id="st">${wahl}</select></label></div>
-      ${await kommentare("anliegen", x.id, x.kunde_id)}`, INTERN_REITER, "intern/anliegen", z);
+      ${await kommentarBlock({ art: "anliegen", id: x.id, kundeId: x.kunde_id, titel: "Antworten" })}`, INTERN_REITER, "intern/anliegen", z);
     document.getElementById("st").onchange = async (ev) => {
       const { error } = await sb.from("anliegen").update({ status: ev.target.value, aktualisiert: new Date().toISOString() }).eq("id", id);
       if (error) return alertLeise(fehlerText(error));
       internAnliegenAnzeigen(id);
     };
-    kommentarVerdrahten(() => internAnliegenAnzeigen(id));
+    kommentarVerdrahten(async () => { if (x.status === "offen") { await sb.from("anliegen").update({ status: "in_arbeit", aktualisiert: new Date().toISOString() }).eq("id", id); } });
   }
 
   async function internRoadmap() {
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("roadmap").select("*").eq("kunde_id", k.id).order("reihenfolge").order("titel")]);
-    const wahl = (st) => Object.entries(ROADMAP_STATUS).map(([w, n]) => `<option value="${w}" ${w === st ? "selected" : ""}>${n}</option>`).join("");
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Roadmap</h1>
+    const wahl = (st) => Object.entries(ROADMAP_STATUS_INTERN).map(([w, n]) => `<option value="${w}" ${w === st ? "selected" : ""}>${n}</option>`).join("");
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Roadmap</h1>
       <p class="lead">Der Kunde sieht nur Punkte mit „sichtbar“.</p><div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<ul class="liste">${data.map((r) => `<li><div><div class="titel">${esc(r.titel)}${r.sichtbar ? '<span class="marke gruen">sichtbar</span>' : '<span class="marke">intern</span>'}</div><div class="unter">${esc(r.beschreibung || "")}${r.zeitraum ? " · " + esc(r.zeitraum) : ""}</div></div>
         <div class="aktionen"><select data-rstatus="${r.id}" style="width:auto;padding:6px 8px;font-size:14px">${wahl(r.status)}</select><button class="text" data-rsicht="${r.id}" data-wert="${r.sichtbar}">${r.sichtbar ? "Ausblenden" : "Sichtbar machen"}</button><button class="text" data-rweg="${r.id}">Löschen</button></div></li>`).join("")}</ul>` : `<div class="leer">Noch keine Roadmap für ${esc(k.name)}.</div>`}
@@ -757,7 +1015,7 @@
       sb.from("mitglieder").select("user_id,email,anzeigename,gesperrt_am,team_bestaetigt_am,letzte_anmeldung").eq("rolle", "team").order("email"),
     ]);
     const ich = S.user?.id;
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Zugänge</h1>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Zugänge</h1>
       <p class="lead">Anmelden kann sich nur, wer hier auf der Liste steht: als einzelne Adresse oder über die Firmen-Domain. Freemail-Domains gehen nur als einzelne Adresse.</p>
       <div style="margin-top:32px">${kundenwahl()}</div>
       <section class="abschnitt" style="margin-top:8px"><div class="abschnitt-kopf"><h2>Zugangsliste ${esc(k.name)}</h2></div>
@@ -813,33 +1071,38 @@
     const k = S.internKunde;
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("protokoll").select("*").eq("kunde_id", k.id).order("zeit", { ascending: false }).limit(200)]);
     const text = { person_gesperrt: "Person gesperrt", person_entsperrt: "Person entsperrt", team_freigeschaltet: "Team freigeschaltet", team_freischaltung_entzogen: "Team-Freischaltung entzogen", anliegen_angelegt: "Anliegen angelegt", kommentar: "Kommentar", anmeldung: "Anmeldung", bericht_geoeffnet: "Bericht geöffnet", bericht_freigegeben: "Bericht freigegeben", bericht_abgelegt: "Bericht als Entwurf abgelegt", entscheidung_beantwortet: "Entscheidung beantwortet", datei_vom_kunden: "Datei hochgeladen (Kunde)", datei_von_uns: "Datei bereitgestellt (wir)" };
-    rahmen(`<div class="label kicker">Interner Bereich</div><h1>Protokoll</h1><div style="margin-top:32px">${kundenwahl()}</div>
+    rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Protokoll</h1><div style="margin-top:32px">${kundenwahl()}</div>
       ${data?.length ? `<table class="protokoll"><thead><tr><th>Zeit</th><th>Vorgang</th><th>Details</th></tr></thead><tbody>${data.map((p) => `<tr><td>${zeit(p.zeit)}</td><td>${esc(text[p.aktion] || p.aktion)}</td><td>${esc(p.details ? Object.values(p.details).join(" · ") : "")}</td></tr>`).join("")}</tbody></table>` : `<div class="leer">Noch keine Vorgänge.</div>`}`,
       INTERN_REITER, "intern/protokoll", z);
     kundenwahlVerdrahten(internProtokoll);
   }
 
+
   // ---------- Router ----------
   async function rendern() {
     if (!S.mitglied) return;
-    const [a, b, c] = route();
+    const [a, b, c, d] = route();
+    const team = S.mitglied.rolle === "team";
     try {
-      if (S.mitglied.rolle === "team") {
-        document.title = "Interner Bereich · Kundenportal PPotthoff";
+      if (a === "wer-sieht-was") return werSiehtWas();
+      if (team) {
         if (a !== "intern") return (location.hash = "#/intern");
-        if (!b) return internBerichte();
-        if (b === "vorschau") return berichtAnzeigen(c, true);
-        if (b === "anliegen" && c) return internAnliegenAnzeigen(c);
-        return ({ entscheidungen: internEntscheidungen, anliegen: internAnliegen, dateien: internDateien, aufgaben: internAufgaben, roadmap: internRoadmap, werkzeuge: internWerkzeuge, zugaenge: internZugaenge, protokoll: internProtokoll }[b] || internBerichte)();
+        laedt(b && b !== "vorschau" ? "intern/" + b : "intern", INTERN_REITER);
+        if (!b) return await internBerichte();
+        if (b === "vorschau" && c) return await berichtAnzeigen(c, true, d === "werte");
+        if (b === "anliegen" && c) return await internAnliegenAnzeigen(c);
+        return await ({ entscheidungen: internEntscheidungen, anliegen: internAnliegen, dateien: internDateien, aufgaben: internAufgaben, roadmap: internRoadmap, werkzeuge: internWerkzeuge, zugaenge: internZugaenge, protokoll: internProtokoll }[b] || internBerichte)();
       }
-      document.title = `${S.kunde.name} · Kundenportal PPotthoff`;
-      if (a === "berichte" && b) return berichtAnzeigen(b);
-      if (a === "aufgaben" && b) return aufgabeAnzeigen(b);
-      if (a === "anliegen" && b === "neu") return anliegenNeu();
-      if (a === "anliegen" && b) return anliegenAnzeigen(b);
-      return ({ "": uebersicht, berichte, entscheidungen, aufgaben, anliegen: anliegenSeite, dateien: dateienSeite, roadmap: roadmapSeite, werkzeuge }[a] || uebersicht)();
+      laedt(a || "");
+      if (a === "berichte" && b) return await berichtAnzeigen(b, false, c === "werte");
+      if (a === "entscheidungen" && b) return await entscheidungAnzeigen(b);
+      if (a === "aufgaben" && b) return await aufgabeAnzeigen(b);
+      if (a === "anliegen" && b === "neu") return await anliegenNeu();
+      if (a === "anliegen" && b) return await anliegenAnzeigen(b);
+      return await ({ "": uebersicht, berichte, entscheidungen, aufgaben, anliegen: anliegenSeite, dateien: dateienSeite, roadmap: roadmapSeite, werkzeuge }[a] || uebersicht)();
     } catch (e) {
-      alertLeise("Etwas hat nicht geladen: " + fehlerText(e));
+      console.error(e);
+      alertLeise("Etwas hat nicht geladen. Bitte die Seite neu laden.");
     }
   }
 

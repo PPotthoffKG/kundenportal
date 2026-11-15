@@ -1,2 +1,3 @@
 *.local.txt
 *.local.*
+__pycache__/
