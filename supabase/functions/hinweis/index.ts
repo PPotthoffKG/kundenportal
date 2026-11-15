@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     kundeId = d.kunde_id; zeit = d.beantwortet_am; schluessel += `:${d.antwort}:${d.beantwortet_am}`;
     const w = { ja: "Ja", nein: "Nein", intern: "Kläre ich intern" }[d.antwort as string] ?? d.antwort;
     betreff = `Antwort: ${w} · ${d.frage}`;
-    zeilen = [`${d.beantwortet_von ?? "Der Kunde"} hat geantwortet: <b>${esc(w)}</b>`, `Frage: ${esc(d.frage)}`, d.kommentar ? `Kommentar: ${esc(d.kommentar)}` : ""];
+    zeilen = [`${esc(d.beantwortet_von ?? "Der Kunde")} hat geantwortet: <b>${esc(w)}</b>`, `Frage: ${esc(d.frage)}`, d.kommentar ? `Kommentar: ${esc(d.kommentar)}` : ""];
     link = `${PORTAL}/entscheidungen`;
   } else if (e.art === "anliegen") {
     const { data: x } = await db.from("anliegen").select("kunde_id,titel,text,erstellt_name,erstellt_rolle,erstellt").eq("id", e.id).maybeSingle();
@@ -46,13 +46,13 @@ Deno.serve(async (req) => {
   }
   if (!frisch(zeit)) return ok({ uebersprungen: "nicht frisch" });
 
+  const key = Deno.env.get("RESEND_API_KEY");
+  if (!key) return ok({ uebersprungen: "RESEND_API_KEY fehlt" });
   // Jeden Anlass nur einmal
   const { error: dup } = await db.from("hinweise_gesendet").insert({ schluessel });
   if (dup) return ok({ uebersprungen: "schon gesendet" });
 
   const { data: kunde } = await db.from("kunden").select("name").eq("id", kundeId).maybeSingle();
-  const key = Deno.env.get("RESEND_API_KEY");
-  if (!key) return ok({ uebersprungen: "RESEND_API_KEY fehlt" });
   const html = `<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;line-height:1.5;color:#000">` +
     [`<b>${esc(kunde?.name ?? "")}</b>`, ...zeilen.filter(Boolean), `<a href="${link}" style="color:#000">Im Portal öffnen</a>`].map((z) => `<p style="margin:0 0 12pt">${z}</p>`).join("") + `</div>`;
   const r = await fetch("https://api.resend.com/emails", {
