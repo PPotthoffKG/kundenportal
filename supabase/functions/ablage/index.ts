@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
   }
 
   // Art und Datum gehen in den Speicherpfad: nur feste Werte zulassen
-  if (!["wochenstand", "monatsauswertung"].includes(e.art)) return antwort(400, { fehler: "Art unbekannt" });
+  if (!["wochenstand", "monatsauswertung", "terminnotiz"].includes(e.art)) return antwort(400, { fehler: "Art unbekannt" });
   if (typeof e.zeitraum_start !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.zeitraum_start)) {
     return antwort(400, { fehler: "zeitraum_start muss JJJJ-MM-TT sein" });
   }
@@ -70,10 +70,17 @@ Deno.serve(async (req) => {
     if (up2.error) return antwort(500, { fehler: "PDF-Ablage: " + up2.error.message });
     pdfPfad = `${basis}.pdf`;
   }
+  // Seite 2 „Alle Werte“ (Weg 1): eigene Datei neben Seite 1
+  let wertePfad: string | null = null;
+  if (e.html_werte) {
+    const up3 = await db.storage.from("berichte").upload(`${basis}-alle-werte.html`, new TextEncoder().encode(e.html_werte), { contentType: "text/html; charset=utf-8", upsert: true });
+    if (up3.error) return antwort(500, { fehler: "Alle-Werte-Ablage: " + up3.error.message });
+    wertePfad = `${basis}-alle-werte.html`;
+  }
 
   const zeile = {
     kunde_id: kunde.id, art: e.art, zeitraum: e.zeitraum, zeitraum_start: e.zeitraum_start, titel: e.titel,
-    zusammenfassung: e.zusammenfassung ?? null, html_pfad: `${basis}.html`, pdf_pfad: pdfPfad,
+    zusammenfassung: e.zusammenfassung ?? null, html_pfad: `${basis}.html`, pdf_pfad: pdfPfad, werte_pfad: wertePfad,
     status: "entwurf", freigegeben_am: null, freigegeben_von: null,
   };
   const { data: bericht, error: fb } = await db.from("berichte")
