@@ -124,13 +124,13 @@
     ...(S.mehr.roadmap ? [["roadmap", "Roadmap"]] : []), ...(S.mehr.werkzeuge ? [["werkzeuge", "Werkzeuge"]] : [])];
 
   function rahmen({ titel, aktiv, buehne, inhalt, zaehler = {}, reiter = null }) {
-    const team = S.mitglied?.rolle === "team";
+    const team = S.mitglied?.rolle === "team" && !S.alsKunde;
     const name = team ? "Interner Bereich" : S.kunde?.name || "";
     const tabs = (reiter || KUNDE_REITER()).map(([pfad, text]) => {
       const z = zaehler[pfad] ? `<span class="zahl" aria-label="${zaehler[pfad]} ${team ? "offen" : t("warten auf Sie", "warten auf dich")}">${zaehler[pfad]}</span>` : "";
       return `<li><a href="#/${pfad}" ${aktiv === pfad ? 'aria-current="page"' : ""}>${esc(text)}${z}</a></li>`;
     }).join("");
-    app.innerHTML = `<a class="sprung" href="#inhalt">Zum Inhalt</a>
+    app.innerHTML = `<a class="sprung" href="#inhalt">Zum Inhalt</a>${S.alsKunde ? `<div class="ansicht-hinweis" role="note"><div class="wrap"><span>Kundensicht ${esc(S.kunde?.name || "")} · nur ansehen, nichts wird gesendet</span><button type="button" class="text" id="ansicht-ende">Zurück zum internen Bereich</button></div></div>` : ""}
       <header class="kopf"><div class="wrap">${LOGO()}<div class="rechts"><span class="wer"><b>${esc(name)}</b> · Kundenportal</span><a href="#" id="abmelden">Abmelden</a></div></div></header>
       <nav class="reiter" aria-label="Bereiche"><div class="wrap"><ul>${tabs}</ul></div></nav>
       <main id="inhalt" tabindex="-1">${buehne ? `<div class="buehne${buehne.uebersicht ? "" : " seite"}"><div class="wrap">${buehne.html}</div></div>` : ""}
@@ -138,6 +138,7 @@
       <footer class="fuss"><div class="wrap"><span>PPotthoff GmbH &amp; Co. KG · Gütersloh</span><a href="#/wer-sieht-was">Wer sieht was?</a><span>Fragen? <a href="mailto:${KONTAKT}">${KONTAKT}</a></span></div></footer>`;
     document.getElementById("abmelden").onclick = (e) => { e.preventDefault(); abmelden(); };
     sprungVerdrahten();
+    const ende = document.getElementById("ansicht-ende"); if (ende) ende.onclick = kundensichtBeenden;
     document.title = `${titel} · ${team ? "Interner Bereich" : S.kunde?.name || ""} · Kundenportal`;
     if (!S.stehenBleiben) window.scrollTo(0, 0);
     S.stehenBleiben = false;
@@ -338,10 +339,33 @@
   }
 
   // ---------- Kundensicht ----------
+  // ---------- Kundensicht für das Team (nur ansehen) ----------
+  // Das Team sieht in der Datenbank alles. In der Kundensicht filtert kq() deshalb auf den gewählten Kunden
+  // und auf das, was der Kunde selbst sehen darf (wie die Zeilenregeln), und sperrt jedes Schreiben.
+  const SICHT = { berichte: (q) => q.eq("status", "freigegeben"), entscheidungen: (q) => q.neq("status", "entwurf"),
+    dateien: (q) => q.or("sichtbar.eq.true,richtung.eq.vom_kunden"), roadmap: (q) => q.eq("sichtbar", true), werkzeuge: (q) => q.eq("aktiv", true) };
+  const NUR_ANSEHEN = { message: "In der Kundensicht kann nichts gesendet werden." };
+  const gesperrt = () => { const f = { select: () => f, single: () => f, maybeSingle: () => f, eq: () => f, then: (ok) => ok({ data: null, error: NUR_ANSEHEN }) }; return f; };
+  function kq(t) {
+    if (!S.alsKunde) return sb.from(t);
+    const id = S.kunde.id;
+    return { select: (c, o) => { const q = sb.from(t).select(c, o).eq("kunde_id", id); return SICHT[t] ? SICHT[t](q) : q; },
+      insert: gesperrt, update: gesperrt, delete: gesperrt, upsert: gesperrt };
+  }
+  const krpc = (name, args) => S.alsKunde ? gesperrt() : sb.rpc(name, args);
+  async function kundensichtStarten() {
+    if (!S.internKunde) return;
+    S.alsKunde = true; S.kunde = S.internKunde;
+    const [r, w] = await Promise.all([kq("roadmap").select("id", { count: "exact", head: true }).neq("status", "erledigt"), kq("werkzeuge").select("id", { count: "exact", head: true })]);
+    S.mehr = { roadmap: r.count || 0, werkzeuge: w.count || 0 };
+    S.fokusNachWechsel = false; geh("");
+  }
+  function kundensichtBeenden() { S.alsKunde = false; S.kunde = null; S.fokusNachWechsel = false; geh("intern"); }
+
   async function zaehlerKunde() {
     const [e, a] = await Promise.all([
-      sb.from("entscheidungen").select("id", { count: "exact", head: true }).eq("status", "offen"),
-      sb.from("aufgaben").select("id", { count: "exact", head: true }).eq("liegt_bei", "kunde").eq("erledigt", false),
+      kq("entscheidungen").select("id", { count: "exact", head: true }).eq("status", "offen"),
+      kq("aufgaben").select("id", { count: "exact", head: true }).eq("liegt_bei", "kunde").eq("erledigt", false),
     ]);
     S.zaehler = { entscheidungen: e.count || 0, aufgaben: a.count || 0 };
     return S.zaehler;
@@ -364,12 +388,12 @@
   async function uebersicht() {
     const [z, b, e, a, an, k, d] = await Promise.all([
       zaehlerKunde(),
-      sb.from("berichte").select("id,art,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(20),
-      sb.from("entscheidungen").select("id,frage,frist,antwort,erstellt").eq("status", "offen").order("erstellt"),
-      sb.from("aufgaben").select("id,titel,frist,aktualisiert").eq("liegt_bei", "kunde").eq("erledigt", false),
-      sb.from("anliegen").select("id,titel,status,aktualisiert").order("aktualisiert", { ascending: false }).limit(30),
-      sb.from("kommentare").select("id,bezug_art,bezug_id,autor_name,autor_rolle,erstellt").eq("autor_rolle", "team").order("erstellt", { ascending: false }).limit(30),
-      sb.from("dateien").select("id,name,notiz,richtung,erstellt").eq("richtung", "von_uns").order("erstellt", { ascending: false }).limit(10),
+      kq("berichte").select("id,art,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(20),
+      kq("entscheidungen").select("id,frage,frist,antwort,erstellt").eq("status", "offen").order("erstellt"),
+      kq("aufgaben").select("id,titel,frist,aktualisiert").eq("liegt_bei", "kunde").eq("erledigt", false),
+      kq("anliegen").select("id,titel,status,aktualisiert").order("aktualisiert", { ascending: false }).limit(30),
+      kq("kommentare").select("id,bezug_art,bezug_id,autor_name,autor_rolle,erstellt").eq("autor_rolle", "team").order("erstellt", { ascending: false }).limit(30),
+      kq("dateien").select("id,name,notiz,richtung,erstellt").eq("richtung", "von_uns").order("erstellt", { ascending: false }).limit(10),
     ]);
     const alle = b.data || [];
     const brief = alle.find((r) => r.art === "wochenstand");
@@ -422,7 +446,7 @@
   // ---------- Kommentare (Kunde und Team) ----------
   // Name, Rolle und Zeit setzt die Datenbank aus dem Zugang; die Oberfläche schickt nur den Text.
   async function verlauf(art, id) {
-    const { data } = await sb.from("kommentare").select("id,text,autor_name,autor_rolle,erstellt").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
+    const { data } = await kq("kommentare").select("id,text,autor_name,autor_rolle,erstellt").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
     return data || [];
   }
   function komHtml(k) {
@@ -448,7 +472,7 @@
       const text = f.text.value.trim();
       if (!text) return feldFehler(f.text, "Bitte einen Text eingeben.");
       const k = f.querySelector("button"); const alt = k.textContent; k.disabled = true; k.textContent = "Wird gesendet";
-      const { data, error } = await sb.from("kommentare").insert({ kunde_id: f.dataset.kunde, bezug_art: f.dataset.art, bezug_id: f.dataset.id, text }).select("id,text,autor_name,autor_rolle,erstellt").single();
+      const { data, error } = await kq("kommentare").insert({ kunde_id: f.dataset.kunde, bezug_art: f.dataset.art, bezug_id: f.dataset.id, text }).select("id,text,autor_name,autor_rolle,erstellt").single();
       k.disabled = false; k.textContent = alt;
       if (error) return meldung(m, fehlerText(error));
       entwurfWeg(`kom:${f.dataset.art}:${f.dataset.id}`);
@@ -487,6 +511,7 @@
   // Lädt alle gewählten Dateien hoch. Scheitert eine, gehen die übrigen weiter.
   async function hochladen(box, kundeId, richtung, bezug) {
     const dateien = box._dateien || [];
+    if (S.alsKunde) return { ok: [], fehl: dateien.map((d) => ({ name: d.name, grund: NUR_ANSEHEN.message })) };
     const ordner = richtung === "vom_kunden" ? "vom-kunden" : "von-uns";
     const ok = [], fehl = [];
     for (const d of dateien) {
@@ -497,7 +522,7 @@
       if (up.error) { fehl.push(`<b>${esc(d.name)}</b> hat nicht geklappt`); continue; }
       const zeile_ = { kunde_id: kundeId, pfad, name: d.name, groesse: d.size, mime: d.type, richtung, notiz: box.querySelector("[name=notiz]")?.value.trim() || null };
       if (S.g3 && bezug) { zeile_.bezug_art = bezug[0]; zeile_.bezug_id = bezug[1]; }
-      const ins = await sb.from("dateien").insert(zeile_);
+      const ins = await kq("dateien").insert(zeile_);
       if (ins.error) fehl.push(`<b>${esc(d.name)}</b> hat nicht geklappt`); else ok.push(d.name);
     }
     return { ok, fehl };
@@ -528,7 +553,7 @@
   }
   async function dateienAm(art, id) {
     if (!S.g3) return [];
-    const { data } = await sb.from("dateien").select("*").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
+    const { data } = await kq("dateien").select("*").eq("bezug_art", art).eq("bezug_id", id).order("erstellt");
     return data || [];
   }
   function alertLeise(text) {
@@ -539,7 +564,7 @@
 
   // ---------- Berichte ----------
   async function berichte() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("berichte").select("id,art,titel,zeitraum,zeitraum_start,freigegeben_am").order("zeitraum_start", { ascending: false })]);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("berichte").select("id,art,titel,zeitraum,zeitraum_start,freigegeben_am").order("zeitraum_start", { ascending: false })]);
     const gruppe = (art, h) => {
       const liste = (data || []).filter((r) => r.art === art);
       return liste.length ? `<section class="block"><h2>${h}</h2><ul class="register ohne-art">${liste.map((r) => zeile({ href: `#/berichte/${r.id}`, titel: zeitraumText(r), tun: "Lesen", mitArt: false })).join("")}</ul></section>` : "";
@@ -561,7 +586,7 @@
   async function vergleich(art, idA, idB) {
     const db = art === "monat" ? "monatsauswertung" : "wochenstand";
     const wort = art === "monat" ? ["Monat", "Monate"] : ["Woche", "Wochen"];
-    const [z, res] = await Promise.all([zaehlerKunde(), sb.from("berichte").select("id,zeitraum,zeitraum_start,kennzahlen").eq("art", db).order("zeitraum_start", { ascending: false })]);
+    const [z, res] = await Promise.all([zaehlerKunde(), kq("berichte").select("id,zeitraum,zeitraum_start,kennzahlen").eq("art", db).order("zeitraum_start", { ascending: false })]);
     const liste = (res.data || []).filter((r) => Array.isArray(r.kennzahlen) && r.kennzahlen.length);
     const kopf = buehneSeite({ zurueck: ["berichte", "Alle Berichte"], kennung: "Berichte", titel: `${wort[1]} vergleichen`, unter: `Zwei ${wort[1]} nebeneinander, mit der Veränderung.` });
     if (res.error || liste.length < 2) return rahmen({ titel: `${wort[1]} vergleichen`, aktiv: "berichte", zaehler: z, buehne: kopf, inhalt: leer(`Für einen Vergleich braucht es mindestens zwei ${wort[1]} mit Zahlen.`) });
@@ -611,7 +636,7 @@
   }
 
   async function berichtAnzeigen(id, intern = false, werte = false) {
-    const { data: r, error } = await sb.from("berichte").select("*").eq("id", id).maybeSingle();
+    const { data: r, error } = await kq("berichte").select("*").eq("id", id).maybeSingle();
     const z = intern ? await zaehlerIntern() : await zaehlerKunde();
     const reiter = intern ? INTERN_REITER : null;
     const zurueckPfad = intern ? "intern" : "berichte";
@@ -641,7 +666,7 @@
         window.addEventListener("resize", passe);
       };
       f.srcdoc = html;
-      if (!intern && !werte) sb.rpc("bericht_geoeffnet", { p_id: r.id }).then(() => {});
+      if (!intern && !werte) krpc("bericht_geoeffnet", { p_id: r.id }).then(() => {});
     } catch (e) {
       const l = document.getElementById("ber-laedt");
       if (l) meldung(l, `${ART[r.art] || "Der Bericht"} hat nicht geladen. Bitte neu laden oder an ${KONTAKT} schreiben.`);
@@ -657,7 +682,7 @@
 
   // ---------- Entscheidungen ----------
   async function entscheidungen() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("entscheidungen").select("*").order("erstellt", { ascending: false })]);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("entscheidungen").select("*").order("erstellt", { ascending: false })]);
     const offen = (data || []).filter((d) => d.status === "offen").sort(sortFrist);
     const fertig = (data || []).filter((d) => d.status !== "offen");
     const zeileE = (d) => zeile({ href: `#/entscheidungen/${d.id}`, art: `Entscheidung${d.kategorie ? " · " + esc(d.kategorie) : ""}`, titel: d.frage,
@@ -670,7 +695,7 @@
   }
 
   async function entscheidungAnzeigen(id, fokus = null) {
-    const [z, { data: d }] = await Promise.all([zaehlerKunde(), sb.from("entscheidungen").select("*").eq("id", id).maybeSingle()]);
+    const [z, { data: d }] = await Promise.all([zaehlerKunde(), kq("entscheidungen").select("*").eq("id", id).maybeSingle()]);
     if (!d) return rahmen({ titel: "Entscheidung", aktiv: "entscheidungen", zaehler: z, buehne: buehneSeite({ zurueck: ["entscheidungen", "Alle Entscheidungen"], titel: "Entscheidung nicht gefunden" }), inhalt: leer("Diese Entscheidung gibt es nicht.") });
     const dateien = await dateienAm("entscheidung", d.id);
     const offen = d.status === "offen";
@@ -710,7 +735,7 @@
       if (!a) { wahl.classList.add("fehler"); fw.innerHTML = `<p class="feldfehler" role="alert">${sym("error")}<span>Bitte eine Antwort wählen.</span></p>`; f.querySelector("input[name=a]").focus(); return; }
       wahl.classList.remove("fehler"); fw.innerHTML = "";
       const k = f.querySelector("button[type=submit]"); k.disabled = true; k.textContent = "Wird gesendet";
-      const { error } = await sb.rpc("entscheidung_beantworten", { p_id: d.id, p_antwort: a, p_kommentar: f.k.value });
+      const { error } = await krpc("entscheidung_beantworten", { p_id: d.id, p_antwort: a, p_kommentar: f.k.value });
       k.disabled = false; k.textContent = "Antwort senden";
       if (error) {
         if (/nicht offen/i.test(error.message || "")) { S.fokusNachWechsel = false; return entscheidungAnzeigen(d.id, true); }
@@ -724,7 +749,7 @@
 
   // ---------- Aufgaben ----------
   async function aufgaben() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").eq("erledigt", false)]);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("aufgaben").select("*").eq("erledigt", false)]);
     const beiDir = (data || []).filter((x) => x.liegt_bei === "kunde").sort(sortFrist);
     const beiUns = (data || []).filter((x) => x.liegt_bei === "wir").sort((p, q) => String(p.titel).localeCompare(q.titel, "de"));
     rahmen({ titel: "Aufgaben", aktiv: "aufgaben", zaehler: z, buehne: buehneSeite({ titel: "Aufgaben", unter: "Wer gerade was in der Hand hat" }),
@@ -734,7 +759,7 @@
   }
 
   async function aufgabeAnzeigen(id) {
-    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("aufgaben").select("*").eq("id", id).maybeSingle()]);
+    const [z, { data: x }] = await Promise.all([zaehlerKunde(), kq("aufgaben").select("*").eq("id", id).maybeSingle()]);
     if (!x || x.erledigt) return rahmen({ titel: "Aufgabe", aktiv: "aufgaben", zaehler: z, buehne: buehneSeite({ zurueck: ["aufgaben", "Alle Aufgaben"], titel: "Diese Aufgabe ist erledigt." }), inhalt: `<p><a class="textlink" href="#/">Zur Übersicht</a></p>` });
     const beiDir = x.liegt_bei === "kunde";
     const dateien = await dateienAm("aufgabe", x.id);
@@ -758,8 +783,8 @@
 
   // ---------- Anliegen ----------
   async function anliegenSeite() {
-    const [z, { data }, { data: komm }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("id,titel,status,erstellt_name,erstellt,aktualisiert").order("aktualisiert", { ascending: false }),
-      sb.from("kommentare").select("bezug_id,autor_name,autor_rolle,erstellt").eq("bezug_art", "anliegen").order("erstellt", { ascending: false }).limit(300)]);
+    const [z, { data }, { data: komm }] = await Promise.all([zaehlerKunde(), kq("anliegen").select("id,titel,status,erstellt_name,erstellt,aktualisiert").order("aktualisiert", { ascending: false }),
+      kq("kommentare").select("bezug_id,autor_name,autor_rolle,erstellt").eq("bezug_art", "anliegen").order("erstellt", { ascending: false }).limit(300)]);
     const letzte = {};
     for (const c of komm || []) if (!letzte[c.bezug_id]) letzte[c.bezug_id] = c;
     const z_ = (x) => {
@@ -793,7 +818,7 @@
       if (!titel) { f.titel.setAttribute("aria-invalid", "true"); fb.innerHTML = `<p class="feldfehler" role="alert">${sym("error")}Bitte einen Betreff eingeben.</p>`; f.titel.focus(); return; }
       f.titel.removeAttribute("aria-invalid"); fb.innerHTML = "";
       const k = f.querySelector("button[type=submit]"); k.disabled = true; k.textContent = "Wird gesendet";
-      const { data, error } = await sb.from("anliegen").insert({ kunde_id: S.kunde.id, titel, text: f.text.value.trim() || null }).select("id").single();
+      const { data, error } = await kq("anliegen").insert({ kunde_id: S.kunde.id, titel, text: f.text.value.trim() || null }).select("id").single();
       if (error) { k.disabled = false; k.textContent = "Anliegen senden"; return meldung(document.getElementById("am"), fehlerText(error)); }
       entwurfWeg("anliegen:titel"); entwurfWeg("anliegen:text");
       let dateiFehler = null;
@@ -805,7 +830,7 @@
   }
 
   async function anliegenAnzeigen(id) {
-    const [z, { data: x }] = await Promise.all([zaehlerKunde(), sb.from("anliegen").select("*").eq("id", id).maybeSingle()]);
+    const [z, { data: x }] = await Promise.all([zaehlerKunde(), kq("anliegen").select("*").eq("id", id).maybeSingle()]);
     if (!x) return rahmen({ titel: "Anliegen", aktiv: "anliegen", zaehler: z, buehne: buehneSeite({ zurueck: ["anliegen", "Alle Anliegen"], titel: "Anliegen nicht gefunden" }), inhalt: leer("Dieses Anliegen gibt es nicht.") });
     const dateien = await dateienAm("anliegen", x.id);
     const komm = await kommentarBlock({ art: "anliegen", id: x.id, kundeId: x.kunde_id, titel: "Antworten" });
@@ -825,7 +850,7 @@
 
   // ---------- Dateien ----------
   async function dateienSeite() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("dateien").select("*").order("erstellt", { ascending: false })]);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("dateien").select("*").order("erstellt", { ascending: false })]);
     rahmen({ titel: "Dateien", aktiv: "dateien", zaehler: z, buehne: buehneSeite({ titel: "Dateien", unter: t("Was Sie uns schicken und was wir Ihnen schicken", "Was du uns schickst und was wir dir schicken") }),
       inhalt: `<p class="absatz">Was ${t("Sie hier hochladen", "du hier hochlädst")}, liegt sofort bei uns.</p>${ablageHtml("ab", { notiz: true })}
         <section class="block" style="margin-top:48px"><h2>Alle Dateien</h2><div id="dateiliste">${data?.length ? data.map((d) => dateiHtml(d)).join("") : leer("Noch keine Dateien.")}</div></section>` });
@@ -834,7 +859,7 @@
     ablageVerdrahten("ab", async (box) => {
       const r = await hochladen(box, S.kunde.id, "vom_kunden", null);
       if (r.ok.length) {
-        const { data: neu } = await sb.from("dateien").select("*").order("erstellt", { ascending: false });
+        const { data: neu } = await kq("dateien").select("*").order("erstellt", { ascending: false });
         document.getElementById("dateiliste").innerHTML = (neu || []).map((d) => dateiHtml(d)).join("");
         dateiKnoepfe(); box._dateien = []; box.querySelector("[data-wahl]").textContent = "";
       }
@@ -845,7 +870,7 @@
   // ---------- Roadmap, Werkzeuge, Wer sieht was ----------
   const ROADMAP_STATUS = { laeuft: "Läuft", geplant: "Als Nächstes", spaeter: "Später" };
   async function roadmapSeite() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("roadmap").select("*").neq("status", "erledigt").order("reihenfolge").order("titel")]);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("roadmap").select("*").neq("status", "erledigt").order("reihenfolge").order("titel")]);
     const stand = S.g3 ? (data || []).map((r) => r.stand).filter(Boolean).sort().pop() : null;
     const gruppe = (st) => {
       const arr = (data || []).filter((r) => r.status === st);
@@ -855,12 +880,12 @@
       inhalt: data?.length ? gruppe("laeuft") + gruppe("geplant") + gruppe("spaeter") : leer("Die Roadmap wird gerade aufgebaut.") });
   }
   async function werkzeuge() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), sb.from("werkzeuge").select("*").order("reihenfolge")]);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("werkzeuge").select("*").order("reihenfolge")]);
     rahmen({ titel: "Werkzeuge", aktiv: "werkzeuge", zaehler: z, buehne: buehneSeite({ titel: "Werkzeuge", unter: "Werkzeuge von PPotthoff" }),
       inhalt: data?.length ? `<ul class="register ohne-art">${data.map((w) => `<li><a href="${esc(w.url)}" target="_blank" rel="noopener noreferrer"><span class="titel">${esc(w.titel)}</span>${w.beschreibung ? `<span class="unter">${esc(w.beschreibung)}</span>` : ""}<span class="frist"></span><span class="tun">Öffnen</span></a></li>`).join("")}</ul>` : leer(`Für ${t("Sie", "dich")} sind noch keine Werkzeuge eingerichtet.`) });
   }
   async function werSiehtWas() {
-    const team = S.mitglied?.rolle === "team";
+    const team = S.mitglied?.rolle === "team" && !S.alsKunde;
     const z = team ? {} : await zaehlerKunde();
     const name = team ? "den Kunden" : S.kunde?.name || "";
     rahmen({ titel: "Wer sieht was?", aktiv: "wer-sieht-was", zaehler: z, reiter: team ? INTERN_REITER : null, buehne: buehneSeite({ titel: "Wer sieht was?" }),
@@ -943,10 +968,11 @@
     if (!k) return rahmenAlt(`<h1>Noch keine Kunden</h1>`, INTERN_REITER, "intern");
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("berichte").select("*").eq("kunde_id", k.id).order("zeitraum_start", { ascending: false }).order("art")]);
     rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Berichte freigeben · ${esc(k.name)}</h1><p class="lead">Neue Berichte kommen als Entwurf. Der Kunde sieht sie erst nach der Freigabe; die Entscheidungen des Berichts werden dann mit geöffnet.</p>
-      <div style="margin-top:32px">${kundenwahl()}</div>
+      <div class="leiste" style="margin-top:32px">${kundenwahl()}<button class="btn zwei" type="button" id="als-kunde">Kundensicht von ${esc(k.name)} ansehen</button></div>
       ${data?.length ? `<ul class="liste">${data.map((r) => berichtZeile(r, true)).join("")}</ul>` : `<div class="leer">Für ${esc(k.name)} liegt noch kein Bericht.</div>`}`,
       INTERN_REITER, "intern", z);
     kundenwahlVerdrahten(internBerichte); pdfKnoepfe(); freigabeKnoepfe();
+    document.getElementById("als-kunde").onclick = kundensichtStarten;
   }
 
   async function internEntscheidungen() {
@@ -1162,8 +1188,9 @@
     const [a, b, c, d] = route();
     const team = S.mitglied.rolle === "team";
     try {
+      if (team && S.alsKunde && a === "intern") { S.alsKunde = false; S.kunde = null; }
       if (a === "wer-sieht-was") return werSiehtWas();
-      if (team) {
+      if (team && !S.alsKunde) {
         if (a !== "intern") return (location.hash = "#/intern");
         laedt(b && b !== "vorschau" ? "intern/" + b : "intern", INTERN_REITER);
         if (!b) return await internBerichte();

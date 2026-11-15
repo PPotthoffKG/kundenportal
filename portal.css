@@ -254,6 +254,8 @@ summary.aufklapp{cursor:pointer;font-size:var(--t-neben);text-decoration:underli
 summary.aufklapp::marker{content:""}
 summary.aufklapp::before{content:"+";font-weight:600;width:12px}
 details[open]>summary.aufklapp::before{content:"−"}
+.ansicht-hinweis{background:var(--surface-2);border-bottom:1px solid var(--rule);font-size:var(--t-neben)}
+.ansicht-hinweis .wrap{display:flex;justify-content:space-between;align-items:center;gap:var(--s4);flex-wrap:wrap;min-height:var(--tipp)}
 .datei.intern{flex-wrap:wrap}
 .datei.intern .wo{flex:1 1 260px}
 .qr{background:var(--paper);border:1px solid var(--rule);padding:var(--s4);display:inline-block;margin:var(--s3) 0}
