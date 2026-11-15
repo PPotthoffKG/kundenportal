@@ -28,6 +28,17 @@ Deno.serve(async (req) => {
   let e: any;
   try { e = await req.json(); } catch { return antwort(400, { fehler: "JSON erwartet" }); }
 
+  // Nur Kennzahlen nachtragen (Status und Dateien bleiben unverändert)
+  if (e.aktion === "kennzahlen") {
+    if (!e.kunde_slug || !e.art || !e.zeitraum || !Array.isArray(e.kennzahlen)) return antwort(400, { fehler: "kunde_slug, art, zeitraum und kennzahlen (Liste) nötig" });
+    const { data: k } = await db.from("kunden").select("id").eq("slug", e.kunde_slug).maybeSingle();
+    if (!k) return antwort(404, { fehler: "Kunde unbekannt" });
+    const { data: b, error: fk } = await db.from("berichte").update({ kennzahlen: e.kennzahlen }).eq("kunde_id", k.id).eq("art", e.art).eq("zeitraum", e.zeitraum).select("id,status");
+    if (fk) return antwort(500, { fehler: "Kennzahlen: " + fk.message });
+    if (!b?.length) return antwort(404, { fehler: "Bericht nicht gefunden" });
+    await db.from("protokoll").insert({ kunde_id: k.id, aktion: "kennzahlen_nachgetragen", objekt: b[0].id, details: { von: wer, zeitraum: e.zeitraum } });
+    return antwort(200, { ok: true, bericht_id: b[0].id, status: b[0].status });
+  }
   if (e.aktion !== "bericht") return antwort(400, { fehler: "Unbekannte Aktion" });
   for (const f of ["kunde_slug", "art", "zeitraum", "zeitraum_start", "titel", "html"]) {
     if (!e[f]) return antwort(400, { fehler: `Feld fehlt: ${f}` });
@@ -81,6 +92,7 @@ Deno.serve(async (req) => {
   const zeile = {
     kunde_id: kunde.id, art: e.art, zeitraum: e.zeitraum, zeitraum_start: e.zeitraum_start, titel: e.titel,
     zusammenfassung: e.zusammenfassung ?? null, html_pfad: `${basis}.html`, pdf_pfad: pdfPfad, werte_pfad: wertePfad,
+    ...(Array.isArray(e.kennzahlen) ? { kennzahlen: e.kennzahlen } : {}),
     status: "entwurf", freigegeben_am: null, freigegeben_von: null,
   };
   const { data: bericht, error: fb } = await db.from("berichte")

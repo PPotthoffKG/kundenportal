@@ -16,17 +16,24 @@ def schluessel():
     return os.environ.get("PORTAL_ABLAGE_SCHLUESSEL") or open(os.path.join(HIER, "ablage_schluessel.local.txt")).read().strip()
 
 a = argparse.ArgumentParser()
-for f in ("kunde", "art", "zeitraum", "start", "titel", "html"):
+for f in ("kunde", "art", "zeitraum"):
     a.add_argument("--" + f, required=True)
-for f in ("werte", "pdf", "zusammenfassung", "entscheidungen"):
+for f in ("start", "titel", "html"):
+    a.add_argument("--" + f)
+for f in ("werte", "pdf", "zusammenfassung", "entscheidungen", "kennzahlen"):
     a.add_argument("--" + f)
 a.add_argument("--ueberschreiben", action="store_true")
+a.add_argument("--nur-kennzahlen", action="store_true", help="nur Kennzahlen an einem bestehenden Bericht nachtragen")
 o = a.parse_args()
 lies = lambda p: open(p, encoding="utf-8").read() if p else None
-daten = dict(aktion="bericht", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, zeitraum_start=o.start, titel=o.titel,
+kz = json.load(open(o.kennzahlen)) if o.kennzahlen else None
+if o.nur_kennzahlen:
+    daten = dict(aktion="kennzahlen", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, kennzahlen=kz)
+else:
+  daten = dict(aktion="bericht", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, zeitraum_start=o.start, titel=o.titel,
              html=lies(o.html), html_werte=lies(o.werte), zusammenfassung=(lies(o.zusammenfassung) or "").strip() or None,
              pdf_base64=base64.b64encode(open(o.pdf, "rb").read()).decode() if o.pdf else None,
-             entscheidungen=json.load(open(o.entscheidungen)) if o.entscheidungen else [], ueberschreiben=o.ueberschreiben)
+             entscheidungen=json.load(open(o.entscheidungen)) if o.entscheidungen else [], ueberschreiben=o.ueberschreiben, kennzahlen=kz)
 req = urllib.request.Request(URL, data=json.dumps(daten).encode(), method="POST",
                              headers={"Content-Type": "application/json", "x-ablage-schluessel": schluessel()})
 try:

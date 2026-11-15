@@ -212,6 +212,7 @@ table.t{border-collapse:collapse;width:100%;font-size:var(--t-neben)}
 table.t th{text-align:left;font-weight:400;font-size:var(--t-fein);color:var(--ink-soft);padding:0 var(--s3) var(--s2) 0;border-bottom:1px solid var(--ink);white-space:nowrap}
 table.t td{padding:var(--s2) var(--s3) var(--s2) 0;border-bottom:1px solid var(--rule);vertical-align:top}
 table.t .r{text-align:right;white-space:nowrap} table.t td.r{font-variant-numeric:tabular-nums}
+table.t.vergleich{table-layout:fixed;min-width:520px} table.t.vergleich th:first-child{width:40%}
 table.t tr.knapp td:last-child{color:var(--critical);font-weight:600}
 
 /* ---------- Fuß ---------- */

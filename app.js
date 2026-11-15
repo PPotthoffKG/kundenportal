@@ -544,9 +544,57 @@
       const liste = (data || []).filter((r) => r.art === art);
       return liste.length ? `<section class="block"><h2>${h}</h2><ul class="register ohne-art">${liste.map((r) => zeile({ href: `#/berichte/${r.id}`, titel: zeitraumText(r), tun: "Lesen", mitArt: false })).join("")}</ul></section>` : "";
     };
-    const inhalt = gruppe("wochenstand", "Montagsbriefe") + gruppe("monatsauswertung", "Monatsauswertungen") + gruppe("terminnotiz", "Terminnotizen");
+    const vergleich = (art, text) => (data || []).filter((r) => r.art === art).length > 1 ? `<p class="nach"><a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}">${text}</a></p>` : "";
+    const gruppeV = (art, h, text) => { const g = gruppe(art, h); return g ? g.replace(/<\/section>$/, vergleich(art, text) + "</section>") : ""; };
+    const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen");
     rahmen({ titel: "Berichte", aktiv: "berichte", zaehler: z, buehne: buehneSeite({ titel: "Berichte", unter: t("Alles, was wir Ihnen geschickt haben", "Alles, was wir dir geschickt haben") }),
       inhalt: inhalt || leer("Noch kein Bericht.") });
+  }
+
+  // ---------- Vergleich zweier Wochen oder Monate (Kennzahlen aus den Berichten) ----------
+  const zahlText = (w, einheit) => {
+    if (w == null) return "–";
+    const dez = einheit === "%" ? 1 : einheit === "€" && Math.abs(w) < 100 ? 2 : w % 1 !== 0 && Math.abs(w) < 100 ? 1 : 0;
+    const t = w.toLocaleString("de-DE", { minimumFractionDigits: dez, maximumFractionDigits: dez });
+    return einheit ? `${t} ${einheit}` : t;
+  };
+  async function vergleich(art, idA, idB) {
+    const db = art === "monat" ? "monatsauswertung" : "wochenstand";
+    const wort = art === "monat" ? ["Monat", "Monate"] : ["Woche", "Wochen"];
+    const [z, res] = await Promise.all([zaehlerKunde(), sb.from("berichte").select("id,zeitraum,zeitraum_start,kennzahlen").eq("art", db).order("zeitraum_start", { ascending: false })]);
+    const liste = (res.data || []).filter((r) => Array.isArray(r.kennzahlen) && r.kennzahlen.length);
+    const kopf = buehneSeite({ zurueck: ["berichte", "Alle Berichte"], kennung: "Berichte", titel: `${wort[1]} vergleichen`, unter: `Zwei ${wort[1]} nebeneinander, mit der Veränderung.` });
+    if (res.error || liste.length < 2) return rahmen({ titel: `${wort[1]} vergleichen`, aktiv: "berichte", zaehler: z, buehne: kopf, inhalt: leer(`Für einen Vergleich braucht es mindestens zwei ${wort[1]} mit Zahlen.`) });
+    const a = liste.find((r) => r.id === idA) || liste[0];
+    const b = liste.find((r) => r.id === idB && r.id !== a.id) || liste.find((r) => r.id !== a.id && r.zeitraum_start < a.zeitraum_start) || liste.find((r) => r.id !== a.id);
+    const opt = (sel) => liste.map((r) => `<option value="${r.id}"${r.id === sel ? " selected" : ""}>${esc(r.zeitraum)}</option>`).join("");
+    const mapB = new Map(b.kennzahlen.map((k) => [k.gruppe + "|" + k.name, k]));
+    const gruppen = [];
+    for (const k of a.kennzahlen) { if (!gruppen.includes(k.gruppe)) gruppen.push(k.gruppe); }
+    for (const k of b.kennzahlen) { if (!gruppen.includes(k.gruppe)) gruppen.push(k.gruppe); }
+    const REIHE = ["Gesamt", "Verkauf", "Werbung", "Lager", "Katalog", "Konto", "Marke"];
+    const rang = (g) => (REIHE.indexOf(g) + 1) || REIHE.length + 1;
+    gruppen.sort((x, y) => rang(x) - rang(y));
+    const zeilenVon = (g) => {
+      const da = (n) => a.kennzahlen.find((k) => k.gruppe === g && k.name === n)?.wert != null && mapB.get(g + "|" + n)?.wert != null;
+      const namen = [...new Set([...a.kennzahlen, ...b.kennzahlen].filter((k) => k.gruppe === g).map((k) => k.name))].filter(da);
+      return namen.map((n) => {
+        const ka = a.kennzahlen.find((k) => k.gruppe === g && k.name === n), kb = mapB.get(g + "|" + n);
+        const e = (ka || kb).einheit || "", wa = ka?.wert ?? null, wb = kb?.wert ?? null;
+        let ver = "–";
+        if (wa != null && wb != null) {
+          if (e === "%") { const d = wa - wb; ver = `${d >= 0 ? "+" : "−"}${Math.abs(d).toLocaleString("de-DE", { maximumFractionDigits: 1 })} Punkte`; }
+          else if (wb !== 0) { const p = (wa - wb) / Math.abs(wb) * 100; ver = `${p >= 0 ? "+" : "−"}${Math.abs(p).toLocaleString("de-DE", { maximumFractionDigits: 1 })} %`; }
+        }
+        return `<tr><td>${esc(n)}</td><td class="r" data-k="${esc(a.zeitraum)}">${zahlText(wa, e)}</td><td class="r" data-k="${esc(b.zeitraum)}">${zahlText(wb, e)}</td><td class="r" data-k="Veränderung">${ver}</td></tr>`;
+      }).join("");
+    };
+    const tabellen = gruppen.map((g) => [g, zeilenVon(g)]).filter(([, z]) => z).map(([g, z]) => `<section class="block"><h2>${esc(g)}</h2><div style="overflow-x:auto"><table class="t vergleich"><thead><tr><th>Kennzahl</th><th class="r">${esc(a.zeitraum)}</th><th class="r">${esc(b.zeitraum)}</th><th class="r">Veränderung</th></tr></thead><tbody>${z}</tbody></table></div></section>`).join("");
+    rahmen({ titel: `${wort[1]} vergleichen`, aktiv: "berichte", zaehler: z, buehne: kopf,
+      inhalt: `<form class="leiste" id="vg"><label class="feld"><span>${wort[0]}</span><select name="a">${opt(a.id)}</select></label><label class="feld"><span>Vergleichen mit</span><select name="b">${opt(b.id)}</select></label></form>
+        ${tabellen}<p class="quelle">„Veränderung“ bei Anteilen in Prozentpunkten, sonst in Prozent. Es stehen nur Kennzahlen da, die es für beide Zeiträume gibt.</p>` });
+    const f = document.getElementById("vg");
+    f.onchange = () => { S.fokusNachWechsel = false; S.stehenBleiben = true; geh(`vergleich/${art}/${f.a.value}/${f.b.value}`); };
   }
 
   async function berichtAnzeigen(id, intern = false, werte = false) {
@@ -1110,7 +1158,8 @@
         if (b === "anliegen" && c) return await internAnliegenAnzeigen(c);
         return await ({ entscheidungen: internEntscheidungen, anliegen: internAnliegen, dateien: internDateien, aufgaben: internAufgaben, roadmap: internRoadmap, werkzeuge: internWerkzeuge, zugaenge: internZugaenge, protokoll: internProtokoll }[b] || internBerichte)();
       }
-      laedt(a || "");
+      laedt(a === "vergleich" ? "berichte" : a || "");
+      if (a === "vergleich") return await vergleich(b === "monat" ? "monat" : "woche", c, d);
       if (a === "berichte" && b) return await berichtAnzeigen(b, false, c === "werte");
       if (a === "entscheidungen" && b) return await entscheidungAnzeigen(b);
       if (a === "aufgaben" && b) return await aufgabeAnzeigen(b);
