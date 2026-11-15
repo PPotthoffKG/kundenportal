@@ -45,6 +45,15 @@
     el.innerHTML = `<div class="meldung ${art === "fehler" ? "fehler" : art === "ok" ? "ok" : ""}" role="${art === "fehler" ? "alert" : "status"}" tabindex="-1">${sym(s)}<div>${html ? text : `<p>${esc(text)}</p>`}</div></div>`;
     el.firstElementChild.focus();
   }
+  // Fehler am Feld: Satz mit Symbol direkt unter dem Feld, verknüpft über aria-describedby, weg beim nächsten Tippen
+  function feldFehler(input, text, html = false) {
+    const id = "f-" + (input.name || "feld");
+    let p = document.getElementById(id);
+    if (!p) { p = document.createElement("p"); p.id = id; p.className = "feldfehler"; p.setAttribute("role", "alert"); input.closest("label").after(p); }
+    p.innerHTML = `${sym("error")}<span>${html ? text : esc(text)}</span>`;
+    input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", id); input.focus();
+    input.addEventListener("input", () => { p.remove(); input.removeAttribute("aria-invalid"); input.removeAttribute("aria-describedby"); }, { once: true });
+  }
   const fehlerSatz = () => `Das hat nicht geklappt. Bitte noch einmal versuchen oder an ${KONTAKT} schreiben.`;
   function fehlerText(e, ctx = "") {
     const m = (e && (e.message || e.error_description || e.msg)) || String(e);
@@ -128,6 +137,7 @@
         <div class="unten"><div class="wrap">${inhalt}</div></div></main>
       <footer class="fuss"><div class="wrap"><span>PPotthoff GmbH &amp; Co. KG · Gütersloh</span><a href="#/wer-sieht-was">Wer sieht was?</a><span>Fragen? <a href="mailto:${KONTAKT}">${KONTAKT}</a></span></div></footer>`;
     document.getElementById("abmelden").onclick = (e) => { e.preventDefault(); abmelden(); };
+    sprungVerdrahten();
     document.title = `${titel} · ${team ? "Interner Bereich" : S.kunde?.name || ""} · Kundenportal`;
     if (!S.stehenBleiben) window.scrollTo(0, 0);
     S.stehenBleiben = false;
@@ -135,6 +145,11 @@
     if (h) { h.setAttribute("tabindex", "-1"); if (S.fokusNachWechsel) h.focus({ preventScroll: true }); }
     S.fokusNachWechsel = true;
     entwurfVerdrahten();
+  }
+  // „Zum Inhalt“ darf die Adresse nicht ändern (Hash-Router): Fokus direkt auf den Inhalt
+  function sprungVerdrahten() {
+    const a = app.querySelector("a.sprung"); if (!a) return;
+    a.onclick = (e) => { e.preventDefault(); const z = document.getElementById("inhalt"); const h = z.querySelector("h1"); (h || z).focus(); (h || z).scrollIntoView({ block: "start" }); };
   }
   // Platzhalter bei jedem Seitenwechsel: Kopf und Reiter stehen sofort
   function laedt(aktiv, reiter) {
@@ -168,7 +183,8 @@
   const hatZiel = () => !!route()[0] && !route()[0].startsWith("intern");
   function anmeldeRahmen(form) {
     document.title = "Anmelden · Kundenportal PPotthoff";
-    app.innerHTML = `<main id="inhalt" class="anmeldung">${SEITE()}<section class="form">${form}</section></main>`;
+    app.innerHTML = `<a class="sprung" href="#inhalt">Zum Inhalt</a><main id="inhalt" class="anmeldung" tabindex="-1">${SEITE()}<section class="form">${form}</section></main>`;
+    sprungVerdrahten();
   }
 
   function anmeldung(hinweis, vorbelegt = lokal.get("portal-mail") || "", art = "ok") {
@@ -187,13 +203,13 @@
       const m = document.getElementById("m");
       const mail = f.mail.value.trim().toLowerCase();
       f.mail.removeAttribute("aria-invalid");
-      if (!istMail(mail)) { f.mail.setAttribute("aria-invalid", "true"); return meldung(m, "Bitte eine gültige Mail-Adresse eingeben."); }
+      if (!istMail(mail)) return feldFehler(f.mail, "Bitte eine gültige Mail-Adresse eingeben.");
       const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird gesendet";
       const { error } = await sb.auth.signInWithOtp({ email: mail, options: { shouldCreateUser: true } });
       knopf.disabled = false; knopf.textContent = "Code schicken";
       if (error) {
         const msg = error.message || "";
-        if (/keinen Zugang|not allowed|Signups not allowed|hook/i.test(msg)) { f.mail.setAttribute("aria-invalid", "true"); return meldung(m, `<p>Für <b>${esc(mail)}</b> gibt es keinen Zugang. Stimmt die Adresse? Sonst bitte an ${KONTAKT} schreiben.</p>`, "fehler", true); }
+        if (/keinen Zugang|not allowed|Signups not allowed|hook/i.test(msg)) return feldFehler(f.mail, `Für <b>${esc(mail)}</b> gibt es keinen Zugang. Stimmt die Adresse? Sonst bitte an ${KONTAKT} schreiben.`, true);
         if (/gesperrt/i.test(msg)) return meldung(m, `Dieser Zugang ist gesperrt. Bitte an ${KONTAKT} schreiben.`);
         return meldung(m, fehlerText(error));
       }
@@ -221,11 +237,11 @@
       ev.preventDefault();
       const m = document.getElementById("m");
       const code = f.code.value.replace(/\D/g, "");
-      if (code.length !== 6) return meldung(m, "Bitte die sechs Ziffern aus der Mail eingeben.");
+      if (code.length !== 6) return feldFehler(f.code, "Bitte die sechs Ziffern aus der Mail eingeben.");
       const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird geprüft";
       const { error } = await sb.auth.verifyOtp({ email: mail, token: code, type: "email" });
       knopf.disabled = false; knopf.textContent = "Anmelden";
-      if (error) { f.code.value = ""; f.code.setAttribute("aria-invalid", "true"); meldung(m, fehlerText(error, "code")); return; }
+      if (error) { f.code.value = ""; return feldFehler(f.code, fehlerText(error, "code")); }
       await start(true);
     };
   }
@@ -399,7 +415,7 @@
     }
     rahmen({ titel: "Übersicht", aktiv: "", zaehler: z, buehne: { uebersicht: true, html: buehne }, inhalt: `
       <section class="block" aria-labelledby="h-w"><h2 id="h-w">${t("Wartet auf Sie", "Wartet auf dich")}</h2>${wartet.length ? `<ul class="register fristen">${wartet.map((x) => x.html).join("")}</ul>` : leer(t("Diese Woche müssen Sie nichts tun.", "Diese Woche musst du nichts tun."))}</section>
-      <section class="block" aria-labelledby="h-n"><h2 id="h-n">${t("Neu für Sie", "Neu für dich")}</h2>${neu.length ? `<ul class="register">${neu.map((x) => x.html).join("")}</ul>` : leer(t("Seit Ihrem letzten Besuch ist nichts dazugekommen.", "Seit deinem letzten Besuch ist nichts dazugekommen."))}
+      <section class="block" aria-labelledby="h-n"><h2 id="h-n">${t("Neu für Sie", "Neu für dich")}</h2>${neu.length ? `<ul class="register">${neu.map((x) => x.html).join("")}</ul>` : leer(erster ? "Noch ist nichts da. Neues erscheint hier." : t("Seit Ihrem letzten Besuch ist nichts dazugekommen.", "Seit deinem letzten Besuch ist nichts dazugekommen."))}
         <p class="nach"><a class="textlink" href="#/anliegen/neu">Neues Anliegen stellen</a></p></section>` });
   }
 
@@ -430,8 +446,7 @@
       ev.preventDefault();
       const m = f.querySelector(".m");
       const text = f.text.value.trim();
-      if (!text) { f.text.setAttribute("aria-invalid", "true"); return meldung(m, "Bitte einen Text eingeben."); }
-      f.text.removeAttribute("aria-invalid");
+      if (!text) return feldFehler(f.text, "Bitte einen Text eingeben.");
       const k = f.querySelector("button"); const alt = k.textContent; k.disabled = true; k.textContent = "Wird gesendet";
       const { data, error } = await sb.from("kommentare").insert({ kunde_id: f.dataset.kunde, bezug_art: f.dataset.art, bezug_id: f.dataset.id, text }).select("id,text,autor_name,autor_rolle,erstellt").single();
       k.disabled = false; k.textContent = alt;
@@ -464,10 +479,10 @@
       k.disabled = false;
     }));
   }
-  function ablageHtml(id, { knopf = "Dateien wählen", notiz = false, senden = true } = {}) {
+  function ablageHtml(id, { knopf = "Dateien wählen", notiz = false, senden = true, zwei = false } = {}) {
     return `<div class="ablage" id="${id}"><div class="wahlzeile"><label class="btn zwei" style="cursor:pointer">${esc(knopf)}<input class="datei-eingabe" type="file" multiple></label><span class="neben leise" data-wahl></span></div>
       ${notiz ? `<label class="feld"><span>Wofür ist die Datei? (wenn ${t("Sie mögen", "du magst")})</span><input type="text" name="notiz"></label>` : ""}
-      <p class="hinweis">bis 100 MB je Datei · am Laptop auch hierher ziehen</p>${senden ? `<div class="knopfzeile"><button class="btn" type="button" data-hoch>Hochladen</button></div>` : ""}<div class="m"></div></div>`;
+      <p class="hinweis">bis 100 MB je Datei · am Laptop auch hierher ziehen</p>${senden ? `<div class="knopfzeile"><button class="btn${zwei ? " zwei" : ""}" type="button" data-hoch>Hochladen</button></div>` : ""}<div class="m"></div></div>`;
   }
   // Lädt alle gewählten Dateien hoch. Scheitert eine, gehen die übrigen weiter.
   async function hochladen(box, kundeId, richtung, bezug) {
@@ -547,11 +562,11 @@
     const pfad = werte && r.werte_pfad ? r.werte_pfad : r.html_pfad;
     const titel = werte ? `Alle Werte ${r.zeitraum}` : berichtTitel(r);
     const zurueck = werte ? [`${basis}/${r.id}`, `Zurück zum ${ART[r.art] || "Bericht"}`] : [zurueckPfad, "Alle Berichte"];
-    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">Alle Werte</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(titel)}.pdf">PDF laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
+    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">Alle Werte</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(berichtTitel(r))}.pdf">PDF laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
     const komm = !intern && !werte ? await kommentarBlock({ art: "bericht", id: r.id, kundeId: r.kunde_id }) : "";
     rahmen({ titel: werte ? "Alle Werte" : ART[r.art] || "Bericht", aktiv: zurueckPfad, reiter, zaehler: z,
       buehne: buehneSeite({ zurueck, kennung: `${esc(ART[r.art] || "Bericht")} · ${esc(zeitraumText(r))}${intern ? ` · ${esc(r.status)}` : ""}`, titel }),
-      inhalt: `<div class="papier rahmen"><div class="laedt" id="ber-laedt" style="padding:24px"><p class="wort" role="status">${sym("schedule")}${esc(ART[r.art] || "Bericht")} wird geladen</p><div class="linie"></div></div><iframe id="ber" title="${esc(titel)}" sandbox="allow-same-origin" hidden></iframe></div>${knoepfe}${komm}` });
+      inhalt: `<div class="papier rahmen"><div class="laedt" id="ber-laedt" style="padding:24px"><p class="wort" role="status">${sym("schedule")}${esc(ART[r.art] || "Bericht")} wird geladen</p><div class="linie"></div></div><iframe id="ber" title="${esc(titel)}" sandbox="allow-same-origin" tabindex="-1" hidden></iframe></div>${knoepfe}${komm}` });
     pdfKnoepfe();
     if (intern) freigabeKnoepfe(); else kommentarVerdrahten();
     try {
@@ -605,8 +620,8 @@
     else {
       const optionen = ["ja", "nein", ...(S.g3 ? ["intern"] : [])];
       unten = `${d.antwort === "intern" ? `<div class="meldung" role="status" tabindex="-1" id="ent-meldung">${sym("info")}<p>${t("Sie klären das intern. Wenn Sie so weit sind, antworten Sie einfach hier.", "Du klärst das intern. Wenn du so weit bist, antworte einfach hier.")}</p></div>` : ""}
-        <form id="ef" novalidate><fieldset><legend>${t("Ihre Antwort", "Deine Antwort")}</legend><div class="wahl" id="wahl"${optionen.length === 2 ? ' style="grid-template-columns:1fr 1fr"' : ""}>
-          ${optionen.map((o) => `<label><input type="radio" name="a" value="${o}"> ${ANTWORT[o]}</label>`).join("")}</div></fieldset>
+        <form id="ef" novalidate><fieldset><legend>${t("Ihre Antwort", "Deine Antwort")}</legend><div class="wahl" id="wahl" role="radiogroup" aria-describedby="f-wahl"${optionen.length === 2 ? ' style="grid-template-columns:1fr 1fr"' : ""}>
+          ${optionen.map((o) => `<label><input type="radio" name="a" value="${o}"> ${ANTWORT[o]}</label>`).join("")}</div><div id="f-wahl"></div></fieldset>
           <label class="feld"><span>${t("Kommentar, wenn Sie mögen", "Kommentar, wenn du magst")}</span><textarea name="k" rows="2" maxlength="5000" data-entwurf="ent:${d.id}"></textarea></label>
           <button class="btn" type="submit">Antwort senden</button><div class="m" id="em"></div></form>`;
     }
@@ -617,20 +632,22 @@
         <p><b>Unsere Empfehlung:</b> ${esc(d.empfehlung)}</p>${d.begruendung ? `<p class="grund">${esc(d.begruendung)}</p>` : ""}${d.wenn_nein ? `<p class="grund leise">Wenn nein: ${esc(d.wenn_nein)}</p>` : ""}
         ${d.frist && offen ? `<p class="termin">${fristHtml(d.frist)}</p>` : ""}
         ${dateien.map((x) => dateiHtml(x, { bezug: false })).join("")}
-        ${offen && S.g3 ? `<details class="kein-druck" style="margin-top:16px"><summary class="neben textlink" style="cursor:pointer">Datei hochladen</summary>${ablageHtml("ab")}</details>` : ""}
+        ${offen && S.g3 ? `<details class="kein-druck" style="margin-top:16px"><summary class="aufklapp">Datei hochladen</summary>${ablageHtml("ab", { zwei: true })}</details>` : ""}
         <div id="ent-unten">${unten}</div></article>${komm}` });
     dateiKnoepfe(); kommentarVerdrahten();
     ablageVerdrahten("ab", (box) => hochladen(box, d.kunde_id, "vom_kunden", ["entscheidung", d.id]));
     if (fokus) { const el = document.getElementById("ent-meldung"); if (el) { el.scrollIntoView({ block: "center" }); el.focus({ preventScroll: true }); } }
     const f = document.getElementById("ef");
     if (!f) return;
+    f.querySelectorAll("input[name=a]").forEach((r) => (r.onchange = () => { document.getElementById("wahl").classList.remove("fehler"); document.getElementById("f-wahl").innerHTML = ""; }));
     f.onsubmit = async (ev) => {
       ev.preventDefault();
       const m = document.getElementById("em");
       const a = f.querySelector("input[name=a]:checked")?.value;
       const wahl = document.getElementById("wahl");
-      if (!a) { wahl.classList.add("fehler"); return meldung(m, "Bitte eine Antwort wählen."); }
-      wahl.classList.remove("fehler");
+      const fw = document.getElementById("f-wahl");
+      if (!a) { wahl.classList.add("fehler"); fw.innerHTML = `<p class="feldfehler" role="alert">${sym("error")}<span>Bitte eine Antwort wählen.</span></p>`; f.querySelector("input[name=a]").focus(); return; }
+      wahl.classList.remove("fehler"); fw.innerHTML = "";
       const k = f.querySelector("button[type=submit]"); k.disabled = true; k.textContent = "Wird gesendet";
       const { error } = await sb.rpc("entscheidung_beantworten", { p_id: d.id, p_antwort: a, p_kommentar: f.k.value });
       k.disabled = false; k.textContent = "Antwort senden";

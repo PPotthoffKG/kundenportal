@@ -249,6 +249,10 @@ table.protokoll td{border-bottom:1px solid var(--rule);padding:var(--s2) var(--s
 .zwei-spalten{display:grid;grid-template-columns:1fr 1fr;gap:var(--s8)}
 .karten{display:grid;gap:var(--s4)}
 .klein{font-size:var(--t-fein)}
+summary.aufklapp{cursor:pointer;font-size:var(--t-neben);text-decoration:underline;text-underline-offset:3px;min-height:var(--tipp);display:flex;align-items:center;gap:var(--s2)}
+summary.aufklapp::marker{content:""}
+summary.aufklapp::before{content:"+";font-weight:600;width:12px}
+details[open]>summary.aufklapp::before{content:"−"}
 .datei.intern{flex-wrap:wrap}
 .datei.intern .wo{flex:1 1 260px}
 .qr{background:var(--paper);border:1px solid var(--rule);padding:var(--s4);display:inline-block;margin:var(--s3) 0}
@@ -281,7 +285,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:14px;background:var(--su
   .papier{padding:var(--s4)}
   .kom.team{padding:var(--s3)}
   .anmeldung{grid-template-columns:1fr;min-height:auto;flex:none;align-content:start}
-  .anmeldung .seite{padding:var(--s4) var(--s6);gap:0} .anmeldung .seite .lang{display:none} .anmeldung .seite .logo svg{height:26px}
+  .anmeldung .seite{padding:var(--s4) var(--s6);gap:0} .anmeldung .seite .lang{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap} .anmeldung .seite .logo svg{height:26px}
   .anmeldung .form{padding:var(--s6);justify-content:flex-start}
   table.t thead{display:none}
   table.t,table.t tbody,table.t tr,table.t td{display:block;width:100%}
