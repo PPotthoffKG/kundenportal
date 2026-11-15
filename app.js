@@ -592,7 +592,20 @@
     const tabellen = gruppen.map((g) => [g, zeilenVon(g)]).filter(([, z]) => z).map(([g, z]) => `<section class="block"><h2>${esc(g)}</h2><div style="overflow-x:auto"><table class="t vergleich"><thead><tr><th>Kennzahl</th><th class="r">${esc(a.zeitraum)}</th><th class="r">${esc(b.zeitraum)}</th><th class="r">Veränderung</th></tr></thead><tbody>${z}</tbody></table></div></section>`).join("");
     rahmen({ titel: `${wort[1]} vergleichen`, aktiv: "berichte", zaehler: z, buehne: kopf,
       inhalt: `<form class="leiste" id="vg"><label class="feld"><span>${wort[0]}</span><select name="a">${opt(a.id)}</select></label><label class="feld"><span>Vergleichen mit</span><select name="b">${opt(b.id)}</select></label></form>
-        ${tabellen}<p class="quelle">„Veränderung“ bei Anteilen in Prozentpunkten, sonst in Prozent. Es stehen nur Kennzahlen da, die es für beide Zeiträume gibt.</p>` });
+        ${tabellen}<div class="knopfzeile kein-druck"><button class="btn zwei" type="button" id="vg-druck">Drucken oder als PDF speichern</button><button class="btn zwei" type="button" id="vg-excel">Für Excel laden</button></div><p class="quelle">„Veränderung“ bei Anteilen in Prozentpunkten, sonst in Prozent. Es stehen nur Kennzahlen da, die es für beide Zeiträume gibt.</p>` });
+    document.getElementById("vg-druck").onclick = () => window.print();
+    document.getElementById("vg-excel").onclick = () => {
+      const zeilen = [["Gruppe", "Kennzahl", a.zeitraum, b.zeitraum, "Einheit"]];
+      for (const g of gruppen) for (const k of a.kennzahlen.filter((x) => x.gruppe === g)) {
+        const kb = mapB.get(g + "|" + k.name);
+        if (k.wert == null || kb?.wert == null) continue;
+        zeilen.push([g, k.name, String(k.wert).replace(".", ","), String(kb.wert).replace(".", ","), k.einheit || ""]);
+      }
+      const csv = "\ufeff" + zeilen.map((z) => z.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const l = document.createElement("a"); l.href = url; l.download = `Vergleich ${a.zeitraum} und ${b.zeitraum}.csv`; document.body.appendChild(l); l.click(); l.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
     const f = document.getElementById("vg");
     f.onchange = () => { S.fokusNachWechsel = false; S.stehenBleiben = true; geh(`vergleich/${art}/${f.a.value}/${f.b.value}`); };
   }
@@ -610,7 +623,7 @@
     const pfad = werte && r.werte_pfad ? r.werte_pfad : r.html_pfad;
     const titel = werte ? `Alle Werte ${r.zeitraum}` : berichtTitel(r);
     const zurueck = werte ? [`${basis}/${r.id}`, `Zurück zum ${ART[r.art] || "Bericht"}`] : [zurueckPfad, "Alle Berichte"];
-    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">Alle Werte</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(berichtTitel(r))}.pdf">PDF laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
+    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">Alle Werte</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(berichtTitel(r))}.pdf">PDF laden</button>` : ""}${r.pptx_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pptx_pfad)}" data-name="${esc(berichtTitel(r))}.pptx">PowerPoint laden</button>` : ""}${r.xlsx_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.xlsx_pfad)}" data-name="${esc(berichtTitel(r))}.xlsx">Excel laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
     const komm = !intern && !werte ? await kommentarBlock({ art: "bericht", id: r.id, kundeId: r.kunde_id }) : "";
     rahmen({ titel: werte ? "Alle Werte" : ART[r.art] || "Bericht", aktiv: zurueckPfad, reiter, zaehler: z,
       buehne: buehneSeite({ zurueck, kennung: `${esc(ART[r.art] || "Bericht")} · ${esc(zeitraumText(r))}${intern ? ` · ${esc(r.status)}` : ""}`, titel }),

@@ -39,6 +39,32 @@ Deno.serve(async (req) => {
     await db.from("protokoll").insert({ kunde_id: k.id, aktion: "kennzahlen_nachgetragen", objekt: b[0].id, details: { von: wer, zeitraum: e.zeitraum } });
     return antwort(200, { ok: true, bericht_id: b[0].id, status: b[0].status });
   }
+  // PDF, PowerPoint und Excel an einen bestehenden Bericht hängen (Status bleibt)
+  if (e.aktion === "exporte") {
+    if (!e.kunde_slug || !e.art || !e.zeitraum) return antwort(400, { fehler: "kunde_slug, art und zeitraum nötig" });
+    const { data: k } = await db.from("kunden").select("id").eq("slug", e.kunde_slug).maybeSingle();
+    if (!k) return antwort(404, { fehler: "Kunde unbekannt" });
+    const { data: b } = await db.from("berichte").select("id,html_pfad,status").eq("kunde_id", k.id).eq("art", e.art).eq("zeitraum", e.zeitraum).maybeSingle();
+    if (!b) return antwort(404, { fehler: "Bericht nicht gefunden" });
+    const basis = b.html_pfad.replace(/\.html$/, "");
+    const typen: Record<string, [string, string, string]> = {
+      pdf_base64: ["pdf", "application/pdf", "pdf_pfad"],
+      pptx_base64: ["pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx_pfad"],
+      xlsx_base64: ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx_pfad"],
+    };
+    const neu: Record<string, string> = {};
+    for (const [feld, [endung, mime, spalte]] of Object.entries(typen)) {
+      if (!e[feld]) continue;
+      const up = await db.storage.from("berichte").upload(`${basis}.${endung}`, b64zuBytes(e[feld]), { contentType: mime, upsert: true });
+      if (up.error) return antwort(500, { fehler: `${endung}-Ablage: ` + up.error.message });
+      neu[spalte] = `${basis}.${endung}`;
+    }
+    if (!Object.keys(neu).length) return antwort(400, { fehler: "keine Datei mitgegeben" });
+    const { error: fu } = await db.from("berichte").update(neu).eq("id", b.id);
+    if (fu) return antwort(500, { fehler: "Exporte: " + fu.message });
+    await db.from("protokoll").insert({ kunde_id: k.id, aktion: "exporte_abgelegt", objekt: b.id, details: { von: wer, zeitraum: e.zeitraum, dateien: Object.keys(neu) } });
+    return antwort(200, { ok: true, bericht_id: b.id, status: b.status, ...neu });
+  }
   if (e.aktion !== "bericht") return antwort(400, { fehler: "Unbekannte Aktion" });
   for (const f of ["kunde_slug", "art", "zeitraum", "zeitraum_start", "titel", "html"]) {
     if (!e[f]) return antwort(400, { fehler: `Feld fehlt: ${f}` });
