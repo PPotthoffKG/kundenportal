@@ -1,6 +1,7 @@
 """Montagsbrief fürs Kundenportal (G4 „Der Rahmen für Berichte“).
 
 Aufruf: python3 wochenstand_portal.py <daten.json> <ausgabeordner> [Kundenname]
+Mit "art": "monatsauswertung" in den Daten entsteht die Monatsauswertung im selben Rahmen (Wörter Monat statt Woche).
 
 Schreibt in den Ausgabeordner:
   seite1.html          Das Wichtigste der Woche, Zum Handeln, die übrigen Bereiche
@@ -445,6 +446,14 @@ def alle_werte():
 # ---------------------------------------------------------------- Ausgabe
 os.makedirs(OUTD, exist_ok=True)
 s1, aw = seite1(), alle_werte()
+# Monatsauswertung im selben Rahmen: Daten mit "art": "monatsauswertung", Zeitraum in woche.kw (z. B. "Oktober 2026")
+if D.get("art") == "monatsauswertung":
+    MONAT = [("Das Wichtigste der Woche", "Das Wichtigste des Monats"), ("Was diese Woche fehlt", "Was in diesem Monat fehlt"),
+             ("Für diese Woche liegt", "Für diesen Monat liegt"), ("Vergleich mit Vorwoche und Vorjahreswoche", "Vergleich mit Vormonat und Vorjahresmonat"),
+             ("als in der Vorwoche", "als im Vormonat"), ("Vorwoche ", "Vormonat "), ("diese Woche ", "dieser Monat "),
+             ("Montagsbrief ", "Monatsauswertung ")]
+    for a, b in MONAT:
+        s1, aw = s1.replace(a, b), aw.replace(a, b)
 for name, inhalt in (("seite1.html", s1), ("alle-werte.html", aw), ("zusammenfassung.txt", "\n".join(saetze()) + "\n")):
     p = os.path.join(OUTD, name)
     open(p, "w", encoding="utf-8").write(inhalt)
