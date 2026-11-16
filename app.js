@@ -252,10 +252,21 @@
         <label class="feld"><span>Mail-Adresse</span><input type="email" name="mail" value="${esc(vorbelegt)}" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
         <label class="feld"><span>Passwort</span><input type="password" name="passwort" autocomplete="current-password" required></label>
         <button class="btn" type="submit">Anmelden</button><div id="m"></div></form>
+      <p><button class="text fein" type="button" id="vergessen">Passwort vergessen?</button></p>
       <p><button class="text" type="button" id="zur">Zurück zur Anmeldung mit Code</button></p>`);
     const f = document.getElementById("f");
     (vorbelegt ? f.passwort : f.mail).focus();
     document.getElementById("zur").onclick = () => anmeldung();
+    document.getElementById("vergessen").onclick = async () => {
+      const m = document.getElementById("m");
+      const mail = f.mail.value.trim().toLowerCase();
+      if (!istMail(mail)) return feldFehler(f.mail, "Bitte zuerst die Mail-Adresse eingeben.");
+      const knopf = document.getElementById("vergessen"); knopf.disabled = true;
+      const { error } = await sb.auth.resetPasswordForEmail(mail, { redirectTo: location.origin + location.pathname });
+      knopf.disabled = false;
+      if (error) return meldung(m, fehlerText(error));
+      meldung(m, `Wenn <b>${esc(mail)}</b> zum Team gehört, ist eine Mail mit einem Link unterwegs. Den Link in diesem Browser öffnen, dann ein neues Passwort festlegen.`, "ok");
+    };
     f.onsubmit = async (ev) => {
       ev.preventDefault();
       const m = document.getElementById("m");
@@ -265,6 +276,39 @@
       const { error } = await sb.auth.signInWithPassword({ email: mail, password: f.passwort.value });
       knopf.disabled = false; knopf.textContent = "Anmelden";
       if (error) return meldung(m, fehlerText(error));
+      await start(true);
+    };
+  }
+
+  // Nach dem Link aus der Mail „Passwort vergessen“: erst Code aus der App, dann neues Passwort
+  async function passwortNeu() {
+    if (S.passwortLaeuft) return;
+    S.passwortLaeuft = true;
+    const ok = await zweiFaktor();
+    if (!ok) { S.recovery = S.passwortLaeuft = false; return; }
+    anmeldeRahmen(`<h2>Neues Passwort</h2><p class="leise">Mindestens zwölf Zeichen. Am besten im Passwort-Manager speichern.</p>
+      <form id="f" novalidate>
+        <label class="feld"><span>Neues Passwort</span><input type="password" name="p1" autocomplete="new-password" minlength="12" required></label>
+        <label class="feld"><span>Noch einmal</span><input type="password" name="p2" autocomplete="new-password" minlength="12" required></label>
+        <button class="btn" type="submit">Passwort speichern</button><div id="m"></div></form>
+      <p><button class="text" type="button" id="zur">Abbrechen</button></p>`);
+    const f = document.getElementById("f");
+    f.p1.focus();
+    document.getElementById("zur").onclick = () => { S.recovery = S.passwortLaeuft = false; abmelden(); };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const m = document.getElementById("m");
+      if (f.p1.value.length < 12) return feldFehler(f.p1, "Bitte mindestens zwölf Zeichen.");
+      if (f.p1.value !== f.p2.value) return feldFehler(f.p2, "Die beiden Eingaben sind nicht gleich.");
+      const knopf = f.querySelector("button"); knopf.disabled = true; knopf.textContent = "Wird gespeichert";
+      const { error } = await sb.auth.updateUser({ password: f.p1.value });
+      knopf.disabled = false; knopf.textContent = "Passwort speichern";
+      if (error) {
+        if (/different from the old|same password/i.test(error.message || "")) return feldFehler(f.p1, "Bitte ein anderes Passwort als bisher wählen.");
+        if (/weak|at least|characters/i.test(error.message || "")) return feldFehler(f.p1, "Das Passwort ist zu schwach. Bitte länger oder mit Zahlen und Zeichen.");
+        return meldung(m, fehlerText(error));
+      }
+      S.recovery = S.passwortLaeuft = false;
       await start(true);
     };
   }
@@ -304,8 +348,13 @@
   }
 
   async function start(frischAngemeldet = false) {
+    const linkFehler = /error_code=|error_description=/.test(location.hash);
     const { data: { session } } = await sb.auth.getSession();
-    if (!session) return anmeldung();
+    if (S.recovery && session) return passwortNeu();
+    if (!session) {
+      if (linkFehler) { history.replaceState(null, "", location.pathname); return teamAnmeldung(); }
+      return anmeldung();
+    }
     S.user = session.user;
     const { data: m } = await sb.from("mitglieder").select("rolle,kunde_id,anzeigename,anrede,gesperrt_am,team_bestaetigt_am").eq("user_id", S.user.id).maybeSingle();
     if (!m) { await sb.auth.signOut(); return anmeldung(`Dieser Zugang ist keinem Kunden zugeordnet. Bitte an ${KONTAKT} schreiben.`, undefined, "fehler"); }
@@ -1213,6 +1262,9 @@
   }
 
   window.addEventListener("hashchange", rendern);
-  sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT" && S.mitglied) { S.mitglied = null; anmeldung(); } });
+  sb.auth.onAuthStateChange((ev) => {
+    if (ev === "SIGNED_OUT" && S.mitglied) { S.mitglied = null; anmeldung(); }
+    if (ev === "PASSWORD_RECOVERY") { S.recovery = true; S.mitglied = null; setTimeout(passwortNeu, 0); }
+  });
   start();
 })();
