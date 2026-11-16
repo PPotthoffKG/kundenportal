@@ -19,6 +19,16 @@ function b64zuBytes(b64: string): Uint8Array {
   return out;
 }
 
+// Kanal (vendor/seller) für Kunden mit beiden Kanälen; leer bei Kunden mit einem Kanal.
+function kanalVon(e: any): string | null | undefined {
+  if (e.kanal == null || e.kanal === "") return null;
+  return ["vendor", "seller"].includes(e.kanal) ? e.kanal : undefined;
+}
+// Filter auf den Kanal: leerer Kanal heißt „kanal is null“.
+function mitKanal(q: any, kanal: string | null) {
+  return kanal ? q.eq("kanal", kanal) : q.is("kanal", null);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return antwort(405, { fehler: "Nur POST" });
   const schluessel = req.headers.get("x-ablage-schluessel") ?? "";
@@ -27,13 +37,15 @@ Deno.serve(async (req) => {
 
   let e: any;
   try { e = await req.json(); } catch { return antwort(400, { fehler: "JSON erwartet" }); }
+  const kanal = kanalVon(e);
+  if (kanal === undefined) return antwort(400, { fehler: "kanal muss vendor oder seller sein" });
 
   // Nur Kennzahlen nachtragen (Status und Dateien bleiben unverändert)
   if (e.aktion === "kennzahlen") {
     if (!e.kunde_slug || !e.art || !e.zeitraum || !Array.isArray(e.kennzahlen)) return antwort(400, { fehler: "kunde_slug, art, zeitraum und kennzahlen (Liste) nötig" });
     const { data: k } = await db.from("kunden").select("id").eq("slug", e.kunde_slug).maybeSingle();
     if (!k) return antwort(404, { fehler: "Kunde unbekannt" });
-    const { data: b, error: fk } = await db.from("berichte").update({ kennzahlen: e.kennzahlen }).eq("kunde_id", k.id).eq("art", e.art).eq("zeitraum", e.zeitraum).select("id,status");
+    const { data: b, error: fk } = await mitKanal(db.from("berichte").update({ kennzahlen: e.kennzahlen }).eq("kunde_id", k.id).eq("art", e.art).eq("zeitraum", e.zeitraum), kanal).select("id,status");
     if (fk) return antwort(500, { fehler: "Kennzahlen: " + fk.message });
     if (!b?.length) return antwort(404, { fehler: "Bericht nicht gefunden" });
     await db.from("protokoll").insert({ kunde_id: k.id, aktion: "kennzahlen_nachgetragen", objekt: b[0].id, details: { von: wer, zeitraum: e.zeitraum } });
@@ -44,7 +56,7 @@ Deno.serve(async (req) => {
     if (!e.kunde_slug || !e.art || !e.zeitraum) return antwort(400, { fehler: "kunde_slug, art und zeitraum nötig" });
     const { data: k } = await db.from("kunden").select("id").eq("slug", e.kunde_slug).maybeSingle();
     if (!k) return antwort(404, { fehler: "Kunde unbekannt" });
-    const { data: b } = await db.from("berichte").select("id,html_pfad,status").eq("kunde_id", k.id).eq("art", e.art).eq("zeitraum", e.zeitraum).maybeSingle();
+    const { data: b } = await mitKanal(db.from("berichte").select("id,html_pfad,status").eq("kunde_id", k.id).eq("art", e.art).eq("zeitraum", e.zeitraum), kanal).maybeSingle();
     if (!b) return antwort(404, { fehler: "Bericht nicht gefunden" });
     const basis = b.html_pfad.replace(/\.html$/, "");
     const typen: Record<string, [string, string, string]> = {
@@ -79,10 +91,10 @@ Deno.serve(async (req) => {
   const { data: kunde } = await db.from("kunden").select("id").eq("slug", e.kunde_slug).maybeSingle();
   if (!kunde) return antwort(404, { fehler: "Kunde unbekannt" });
 
-  // Ein Bericht belegt seinen Pfad über Art und Startdatum. Gibt es dort schon einen Bericht
+  // Ein Bericht belegt seinen Pfad über Art, Kanal und Startdatum. Gibt es dort schon einen Bericht
   // mit anderem Zeitraum-Text, wird nichts überschrieben.
-  const { data: alle, error: fa } = await db.from("berichte").select("id,status,zeitraum")
-    .eq("kunde_id", kunde.id).eq("art", e.art).or(`zeitraum.eq.${JSON.stringify(e.zeitraum)},zeitraum_start.eq.${e.zeitraum_start}`);
+  const { data: alle, error: fa } = await mitKanal(db.from("berichte").select("id,status,zeitraum")
+    .eq("kunde_id", kunde.id).eq("art", e.art), kanal).or(`zeitraum.eq.${JSON.stringify(e.zeitraum)},zeitraum_start.eq.${e.zeitraum_start}`);
   if (fa) return antwort(500, { fehler: "Bericht suchen: " + fa.message });
   if ((alle ?? []).some((b) => b.zeitraum !== e.zeitraum)) {
     return antwort(409, { fehler: "Zu diesem Startdatum gibt es schon einen Bericht mit anderem Zeitraum" });
@@ -97,7 +109,7 @@ Deno.serve(async (req) => {
     if (fz) return antwort(500, { fehler: "Bericht zurücknehmen: " + fz.message });
   }
 
-  const basis = `${kunde.id}/${e.art}/${e.zeitraum_start}`;
+  const basis = `${kunde.id}/${e.art}/${kanal ? kanal + "/" : ""}${e.zeitraum_start}`;
   const html = new TextEncoder().encode(e.html);
   const up1 = await db.storage.from("berichte").upload(`${basis}.html`, html, { contentType: "text/html; charset=utf-8", upsert: true });
   if (up1.error) return antwort(500, { fehler: "HTML-Ablage: " + up1.error.message });
@@ -116,13 +128,13 @@ Deno.serve(async (req) => {
   }
 
   const zeile = {
-    kunde_id: kunde.id, art: e.art, zeitraum: e.zeitraum, zeitraum_start: e.zeitraum_start, titel: e.titel,
+    kunde_id: kunde.id, art: e.art, kanal, zeitraum: e.zeitraum, zeitraum_start: e.zeitraum_start, titel: e.titel,
     zusammenfassung: e.zusammenfassung ?? null, html_pfad: `${basis}.html`, pdf_pfad: pdfPfad, werte_pfad: wertePfad,
     ...(Array.isArray(e.kennzahlen) ? { kennzahlen: e.kennzahlen } : {}),
     status: "entwurf", freigegeben_am: null, freigegeben_von: null,
   };
   const { data: bericht, error: fb } = await db.from("berichte")
-    .upsert(zeile, { onConflict: "kunde_id,art,zeitraum" }).select("id").single();
+    .upsert(zeile, { onConflict: "kunde_id,art,kanal,zeitraum" }).select("id").single();
   if (fb) return antwort(500, { fehler: "Bericht: " + fb.message });
 
   // Entscheidungen dieses Berichts ersetzen, solange sie Entwurf sind
@@ -135,6 +147,6 @@ Deno.serve(async (req) => {
     const { error: fe } = await db.from("entscheidungen").insert(ents);
     if (fe) return antwort(500, { fehler: "Entscheidungen: " + fe.message });
   }
-  await db.from("protokoll").insert({ kunde_id: kunde.id, aktion: "bericht_abgelegt", objekt: bericht.id, details: { von: wer, zeitraum: e.zeitraum } });
+  await db.from("protokoll").insert({ kunde_id: kunde.id, aktion: "bericht_abgelegt", objekt: bericht.id, details: { von: wer, zeitraum: e.zeitraum, kanal } });
   return antwort(200, { ok: true, bericht_id: bericht.id, entscheidungen: ents.length, status: "entwurf" });
 });

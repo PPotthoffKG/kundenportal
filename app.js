@@ -420,6 +420,11 @@
     return S.zaehler;
   }
   const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz" };
+  // Kunden mit Vendor und Seller bekommen getrennte Berichte je Kanal; sonst ist kanal leer.
+  const KANAL = { vendor: "Vendor", seller: "Seller" };
+  const kanalWort = (r) => (r && KANAL[r.kanal] ? KANAL[r.kanal] + " " : "");
+  const TAGE = ["", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"];
+  const briefTag = () => (S.kunde?.brief_tag >= 1 && S.kunde.brief_tag <= 5 ? S.kunde.brief_tag : 1);
   const ANLIEGEN_STATUS = { offen: "Angekommen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
   const ANTWORT = { ja: "Ja", nein: "Nein", intern: "Kläre ich intern" };
   function zeitraumText(r) {
@@ -429,7 +434,7 @@
     }
     return r.zeitraum || "";
   }
-  const berichtTitel = (r) => `${ART[r.art] || "Bericht"} ${r.zeitraum}`;
+  const berichtTitel = (r) => `${ART[r.art] || "Bericht"} ${kanalWort(r)}${r.zeitraum}`;
   function montagDieserWoche() { const d = new Date(); const tag = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - tag); return d; }
   function kw(d) { const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const n = x.getUTCDay() || 7; x.setUTCDate(x.getUTCDate() + 4 - n); const j = new Date(Date.UTC(x.getUTCFullYear(), 0, 1)); return Math.ceil(((x - j) / 864e5 + 1) / 7); }
   const sortFrist = (p, q) => { const a = fristParse(p.frist), b = fristParse(q.frist); return a && b ? a - b : a ? -1 : b ? 1 : 0; };
@@ -437,7 +442,7 @@
   async function uebersicht() {
     const [z, b, e, a, an, k, d] = await Promise.all([
       zaehlerKunde(),
-      kq("berichte").select("id,art,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(20),
+      kq("berichte").select("id,art,kanal,titel,zeitraum,zeitraum_start,zusammenfassung,freigegeben_am").order("zeitraum_start", { ascending: false }).limit(20),
       kq("entscheidungen").select("id,frage,frist,antwort,erstellt").eq("status", "offen").order("erstellt"),
       kq("aufgaben").select("id,titel,frist,aktualisiert").eq("liegt_bei", "kunde").eq("erledigt", false),
       kq("anliegen").select("id,titel,status,aktualisiert").order("aktualisiert", { ascending: false }).limit(30),
@@ -446,6 +451,8 @@
     ]);
     const alle = b.data || [];
     const brief = alle.find((r) => r.art === "wochenstand");
+    // Bei getrennten Kanälen: der neueste Montagsbrief je Kanal aus derselben Woche
+    const briefe = brief ? alle.filter((r) => r.art === "wochenstand" && r.zeitraum_start === brief.zeitraum_start) : [];
     const lage = (brief?.zusammenfassung || "").split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 3);
     const erster = S.besuch?.erster;
     // Wartet: offene Entscheidungen (auch „kläre ich intern“) und Aufgaben beim Kunden; mit Frist zuerst, die nächste oben, danach das Älteste
@@ -459,7 +466,8 @@
     const notiz = alle.find((r) => r.art === "terminnotiz");
     for (const r of alle) {
       const zeigen = erster ? (r === brief || r === notiz) : istNeu(r.freigegeben_am);
-      if (zeigen && !g.has(r.id)) neu.push({ z: r.freigegeben_am, html: zeile({ href: `#/berichte/${r.id}`, art: ART[r.art], titel: r.zeitraum, tun: "Lesen" }) });
+      const zeigen2 = erster ? (zeigen || briefe.includes(r)) : zeigen;
+      if (zeigen2 && !g.has(r.id)) neu.push({ z: r.freigegeben_am, html: zeile({ href: `#/berichte/${r.id}`, art: ART[r.art], titel: kanalWort(r) + r.zeitraum, tun: "Lesen" }) });
     }
     const anl = Object.fromEntries((an.data || []).map((x) => [x.id, x]));
     const schon = new Set();
@@ -470,21 +478,22 @@
     }
     for (const x of d.data || []) if (istNeu(x.erstellt) && !g.has("d:" + x.id)) neu.push({ z: x.erstellt, html: zeile({ href: "#/dateien", art: "Datei", titel: x.notiz || x.name, tun: "Laden" }) });
     neu.sort((p, q) => new Date(q.z) - new Date(p.z));
-    // Fehlt der Montagsbrief der letzten Woche (ab Montag 9 Uhr)?
+    // Fehlt der Montagsbrief der letzten Woche (ab dem Brieftag des Kunden, 9 Uhr)?
     const montag = montagDieserWoche(); const letzte = new Date(montag); letzte.setDate(montag.getDate() - 7);
-    const fehlt = brief && new Date(brief.zeitraum_start + "T12:00:00") < letzte && (Date.now() - montag.getTime() > 9 * 3600e3);
+    const faellig = new Date(montag); faellig.setDate(montag.getDate() + briefTag() - 1);
+    const fehlt = brief && new Date(brief.zeitraum_start + "T12:00:00") < letzte && (Date.now() - faellig.getTime() > 9 * 3600e3);
     const hallo = du() ? `Hallo${vorname() ? " " + vorname() : ""}` : `Guten Tag${S.mitglied?.anzeigename ? " " + S.mitglied.anzeigename : ""}`;
     let buehne;
     if (erster || !brief) {
       buehne = `<p class="standzeile">Kundenportal · ${esc(S.kunde.name)}</p><h1>${esc(hallo)}, hier ist ${t("Ihr", "dein")} Kundenportal.</h1>
-        <div class="lage"><p>Ab jetzt liegt hier jeden Montag um 9 Uhr der Montagsbrief, einmal im Monat die Monatsauswertung und nach jedem Termin die Terminnotiz.</p>
+        <div class="lage"><p>Ab jetzt liegt hier jeden ${TAGE[briefTag()]} um 9 Uhr der Montagsbrief${briefTag() > 1 ? " für die Vorwoche" : ""}, einmal im Monat die Monatsauswertung und nach jedem Termin die Terminnotiz.</p>
         <p>Wenn wir eine Entscheidung von ${t("Ihnen", "dir")} brauchen, steht sie oben.</p><p>Fragen und Dateien ${t("können Sie", "kannst du")} hier einstellen. Mail und Termin gehen natürlich weiter.</p></div>
         <p class="nach"><a class="textlink" href="#/wer-sieht-was">Wer sieht was?</a></p>`;
     } else {
       buehne = `<p class="standzeile">Stand ${esc(zeitraumText(brief))}</p><h1>${esc(hallo)}, das ist gerade los.</h1>
         ${fehlt ? `<div class="notiz-gruen" role="status">${sym("info")}<p>Der Montagsbrief für KW ${kw(letzte)} kommt noch. Bis dahin steht hier der Stand aus ${esc(brief.zeitraum)}.</p></div>` : ""}
         ${lage.length ? `<div class="lage">${lage.map((s) => `<p>${esc(s)}</p>`).join("")}</div>` : ""}
-        <p class="nach"><a class="textlink" href="#/berichte/${brief.id}">Zum Montagsbrief ${esc(brief.zeitraum)}</a></p>`;
+        <p class="nach">${briefe.map((r) => `<a class="textlink" href="#/berichte/${r.id}">Zum Montagsbrief ${esc(kanalWort(r) + r.zeitraum)}</a>`).join(" · ")}</p>`;
     }
     rahmen({ titel: "Übersicht", aktiv: "", zaehler: z, buehne: { uebersicht: true, html: buehne }, inhalt: `
       <section class="block" aria-labelledby="h-w"><h2 id="h-w">${t("Wartet auf Sie", "Wartet auf dich")}</h2>${wartet.length ? `<ul class="register fristen">${wartet.map((x) => x.html).join("")}</ul>` : leer(t("Diese Woche müssen Sie nichts tun.", "Diese Woche musst du nichts tun."))}</section>
@@ -613,13 +622,19 @@
 
   // ---------- Berichte ----------
   async function berichte() {
-    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("berichte").select("id,art,titel,zeitraum,zeitraum_start,freigegeben_am").order("zeitraum_start", { ascending: false })]);
-    const gruppe = (art, h) => {
-      const liste = (data || []).filter((r) => r.art === art);
+    const [z, { data }] = await Promise.all([zaehlerKunde(), kq("berichte").select("id,art,kanal,titel,zeitraum,zeitraum_start,freigegeben_am").order("zeitraum_start", { ascending: false })]);
+    // kanal: undefined = alle Berichte dieser Art (Kunden mit einem Kanal), sonst nur dieser Kanal
+    const von = (art, kanal) => (data || []).filter((r) => r.art === art && (kanal === undefined || (r.kanal || null) === kanal));
+    const gruppe = (art, h, kanal) => {
+      const liste = von(art, kanal);
       return liste.length ? `<section class="block"><h2>${h}</h2><ul class="register ohne-art">${liste.map((r) => zeile({ href: `#/berichte/${r.id}`, titel: zeitraumText(r), tun: "Lesen", mitArt: false })).join("")}</ul></section>` : "";
     };
-    const vergleich = (art, text) => (data || []).filter((r) => r.art === art).length > 1 ? `<p class="nach"><a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}">${text}</a></p>` : "";
-    const gruppeV = (art, h, text) => { const g = gruppe(art, h); return g ? g.replace(/<\/section>$/, vergleich(art, text) + "</section>") : ""; };
+    const vergleich = (art, text, kanal) => von(art, kanal).length > 1 ? `<p class="nach"><a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}${kanal ? "." + kanal : ""}">${text}</a></p>` : "";
+    const gruppeV = (art, h, text) => {
+      const kanaele = [...new Set(von(art).map((r) => r.kanal || null))];
+      const teile = kanaele.length && kanaele.some((k) => k) ? Object.keys(KANAL).filter((k) => kanaele.includes(k)).map((k) => [k, `${h} ${KANAL[k]}`]) : [[undefined, h]];
+      return teile.map(([k, ueb]) => { const g = gruppe(art, ueb, k); return g ? g.replace(/<\/section>$/, vergleich(art, text, k) + "</section>") : ""; }).join("");
+    };
     const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen");
     rahmen({ titel: "Berichte", aktiv: "berichte", zaehler: z, buehne: buehneSeite({ titel: "Berichte", unter: t("Alles, was wir Ihnen geschickt haben", "Alles, was wir dir geschickt haben") }),
       inhalt: inhalt || leer("Noch kein Bericht.") });
@@ -633,9 +648,15 @@
     return einheit ? `${t} ${einheit}` : t;
   };
   async function vergleich(art, idA, idB) {
-    const db = art === "monat" ? "monatsauswertung" : "wochenstand";
-    const wort = art === "monat" ? ["Monat", "Monate"] : ["Woche", "Wochen"];
-    const [z, res] = await Promise.all([zaehlerKunde(), kq("berichte").select("id,zeitraum,zeitraum_start,kennzahlen").eq("art", db).order("zeitraum_start", { ascending: false })]);
+    // art: "woche" | "monat", bei getrennten Kanälen mit Zusatz ".vendor" bzw. ".seller"
+    const [grund, kanalTeil] = String(art || "woche").split(".");
+    const kanal = KANAL[kanalTeil] ? kanalTeil : null;
+    const db = grund === "monat" ? "monatsauswertung" : "wochenstand";
+    const wortBasis = grund === "monat" ? ["Monat", "Monate"] : ["Woche", "Wochen"];
+    const wort = kanal ? [wortBasis[0], `${wortBasis[1]} ${KANAL[kanal]}`] : wortBasis;
+    let q = kq("berichte").select("id,zeitraum,zeitraum_start,kennzahlen").eq("art", db);
+    q = kanal ? q.eq("kanal", kanal) : q;
+    const [z, res] = await Promise.all([zaehlerKunde(), q.order("zeitraum_start", { ascending: false })]);
     const liste = (res.data || []).filter((r) => Array.isArray(r.kennzahlen) && r.kennzahlen.length);
     const kopf = buehneSeite({ zurueck: ["berichte", "Alle Berichte"], kennung: "Berichte", titel: `${wort[1]} vergleichen`, unter: `Zwei ${wort[1]} nebeneinander, mit der Veränderung.` });
     if (res.error || liste.length < 2) return rahmen({ titel: `${wort[1]} vergleichen`, aktiv: "berichte", zaehler: z, buehne: kopf, inhalt: leer(`Für einen Vergleich braucht es mindestens zwei ${wort[1]} mit Zahlen.`) });
@@ -1248,7 +1269,7 @@
         return await ({ entscheidungen: internEntscheidungen, anliegen: internAnliegen, dateien: internDateien, aufgaben: internAufgaben, roadmap: internRoadmap, werkzeuge: internWerkzeuge, zugaenge: internZugaenge, protokoll: internProtokoll }[b] || internBerichte)();
       }
       laedt(a === "vergleich" ? "berichte" : a || "");
-      if (a === "vergleich") return await vergleich(b === "monat" ? "monat" : "woche", c, d);
+      if (a === "vergleich") return await vergleich(/^(woche|monat)(\.(vendor|seller))?$/.test(b || "") ? b : "woche", c, d);
       if (a === "berichte" && b) return await berichtAnzeigen(b, false, c === "werte");
       if (a === "entscheidungen" && b) return await entscheidungAnzeigen(b);
       if (a === "aufgaben" && b) return await aufgabeAnzeigen(b);
