@@ -42,11 +42,14 @@ const ampel = (s, a, x, y) => {
 
 const tabelleFolien = (ueberschrift, kopf, zeilen, opt = {}) => {
   const proFolie = opt.proFolie || 12;
+  // Rechtsbündig nur Spalten mit Zahlen (Text wie „Was“ in der Terminnotiz bleibt links)
+  const zahl = (w) => { const t = String(w ?? "").trim(); return !t || t === "–" || t === "-" || /^[−\-+]?[\d.,]+(\s?(%|€|Stück|Wochen|Punkte|x))?$/.test(t); };
+  const rechtsSpalte = kopf.map((_, j) => j > 0 && opt.rechts !== false && zeilen.every((z) => zahl(z[j]) || /\d/.test(String(z[j] ?? "")) && String(z[j]).length < 18));
   for (let i = 0; i < zeilen.length; i += proFolie) {
     const s = pres.addSlide({ masterName: "Inhalt" });
     titel(s, ueberschrift + (zeilen.length > proFolie ? ` (${Math.floor(i / proFolie) + 1}/${Math.ceil(zeilen.length / proFolie)})` : ""), opt.unter);
-    const rows = [kopf.map((k, j) => ({ text: k, options: { bold: true, color: WEISS, fill: { color: G }, align: j && opt.rechts !== false ? "right" : "left" } }))];
-    for (const z of zeilen.slice(i, i + proFolie)) rows.push(z.map((w, j) => ({ text: String(w ?? ""), options: { align: j && opt.rechts !== false ? "right" : "left", color: TINTE } })));
+    const rows = [kopf.map((k, j) => ({ text: k, options: { bold: true, color: WEISS, fill: { color: G }, align: rechtsSpalte[j] ? "right" : "left" } }))];
+    for (const z of zeilen.slice(i, i + proFolie)) rows.push(z.map((w, j) => ({ text: String(w ?? ""), options: { align: rechtsSpalte[j] ? "right" : "left", color: TINTE } })));
     const breite = 12.1;
     s.addTable(rows, { x: 0.6, y: 1.7, w: breite, colW: opt.colW || kopf.map((_, j) => j === 0 ? breite * 0.34 : breite * 0.66 / (kopf.length - 1)),
       fontFace: TEXT, fontSize: opt.fontSize || (kopf.length > 8 ? 10 : 12), border: { type: "solid", pt: 0.5, color: RAND }, valign: "middle", margin: 0.05 });
