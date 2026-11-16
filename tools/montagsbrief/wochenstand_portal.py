@@ -19,6 +19,9 @@ Optionale Felder in den Daten:
   zusammenfassung.saetze: [..]             -> fertige Sätze für oben (sonst die ersten drei aus .gesamt)
   zusammenfassung.schritte: {Bereich: ..}  -> nächster Schritt je Bereich unter „Zum Handeln“
   werbung_ruht: true                       -> Werbung ruht (sonst erkannt an Ausgaben 0)
+  einheit: "Stück"                         -> Wort für Einheiten (Standard „Packungen“, z. B. Kalender und Tassen: „Stück“)
+  quelle: "…"                              -> eigener Quellsatz unter dem Bericht (z. B. Vendor Central)
+  bereich_titel: {Bereich: Titel}          -> Überschriften für eigene Bereiche (z. B. „Lieferfähigkeit“)
 """
 import os, re, sys, json, html
 
@@ -91,11 +94,20 @@ if len(ARGS) < 2:
 SRC, OUTD = ARGS[0], ARGS[1]
 D = json.load(open(SRC, encoding="utf-8"))
 KUNDE = ARGS[2] if len(ARGS) > 2 else D.get("konto", "")
+# Wort für Einheiten je Kunde (Pascoe: Packungen; Kalender, Tassen: Stück)
+EW = D.get("einheit") or "Packungen"
+if EW != "Packungen":
+    EW1 = "Stück" if EW == "Stück" else EW
+    WOERTER[:] = [(a, b.replace("Verkaufte Packungen je 100 Besuche", f"Verkaufte {EW} je 100 Besuche")
+                         .replace("verkaufte Packungen je 100 Besuche", f"verkaufte {EW} je 100 Besuche")
+                         .replace("verkaufte Packungen", f"verkaufte {EW}")
+                         .replace("Packungen", EW).replace("Packung", EW1)) for a, b in WOERTER]
 MELDUNGEN = []
 
 BEREICHE = ["Konto", "Katalog", "Verkauf", "Werbung", "Lager", "Marke", "Zahlungen", "Fristen"]
 TITEL = {"Konto": "Konto", "Verkauf": "Verkauf und Besuche", "Werbung": "Werbung", "Lager": "Lager und Versand durch Amazon",
          "Katalog": "Katalog und Angebote", "Marke": "Marke und Markt", "Zahlungen": "Zahlungen und Gebühren", "Fristen": "Fristen"}
+TITEL.update(D.get("bereich_titel") or {})
 RANG = {"r": 3, "y": 2, "g": 1, "": 0}
 WORT = {"r": "Handeln", "y": "Beobachten", "g": "Im Ziel", "": "Ohne Zielwert"}
 
@@ -258,7 +270,7 @@ def tab_artikel():
         return ""
     z = [{"zellen": [artikel(x), eur(x.get("umsatz")), ganz(x.get("einheiten")), ganz(x.get("sitzungen", x.get("besuche"))),
                      pct(x.get("buybox"))]} for x in a]
-    return tabelle("Top 10 Artikel nach Umsatz", [("Artikel", ""), ("Umsatz", "r"), ("Packungen", "r"), ("Besuche", "r"), ("Buy Box", "r")], z,
+    return tabelle("Top 10 Artikel nach Umsatz", [("Artikel", ""), ("Umsatz", "r"), (EW, "r"), ("Besuche", "r"), ("Buy Box", "r")], z,
                    "Buy Box: Anteil der Besuche, in denen euer Angebot vorne stand.")
 
 
@@ -286,7 +298,7 @@ def tab_reichweite():
     z = [{"zellen": [artikel(x), ganz(x.get("bestand")), ganz(x.get("einheiten_woche")), reicht(x.get("wochen"))],
           "cls": "knapp" if num(x.get("wochen")) is not None and x["wochen"] < 2 else ""} for x in r]
     return tabelle("Reichweite der Top-Artikel", [("Artikel", ""), ("Bestand", "r"), ("Verkauft je Woche", "r"), ("Reicht für", "r")], z,
-                   "Gerechnet: Bestand geteilt durch die verkauften Packungen der Woche. Hervorgehoben: reicht weniger als zwei Wochen (unser Vorschlag).")
+                   f"Gerechnet: Bestand geteilt durch die verkauften {EW} der Woche. Hervorgehoben: reicht weniger als zwei Wochen (unser Vorschlag).")
 
 
 def tab_suche():
@@ -380,7 +392,7 @@ def seite(titel, inhalt):
 
 
 def quelle():
-    q = (f'Quelle: Seller Central {D.get("marktplatz", "DE")}, Konto {D.get("konto", KUNDE)}'
+    q = D.get("quelle") or (f'Quelle: Seller Central {D.get("marktplatz", "DE")}, Konto {D.get("konto", KUNDE)}'
          + (f', abgerufen am {dat(D.get("abgerufen", ""))}' if D.get("abgerufen") else "")
          + ". Vergleich mit Vorwoche und Vorjahreswoche.")
     out = f'<p class="quelle">{e(q)}</p>'
