@@ -57,6 +57,15 @@ def zahl(s):
 
 def aus_erhebung(d):
     out, gesehen = [], set()
+    # Kennzahlen mit eigenem "kz" ({"gruppe","name","einheit"}) gehen direkt in den Vergleich (z. B. Vendor-Werte)
+    for x in d.get("kennzahlen", []):
+        kz = x.get("kz")
+        if isinstance(kz, dict) and kz.get("name") and (kz.get("gruppe"), kz["name"]) not in gesehen:
+            out.append({"gruppe": kz.get("gruppe") or x.get("bereich") or "", "name": kz["name"],
+                        "wert": x["kz"]["wert"] if "wert" in kz else zahl(x.get("wert")), "einheit": kz.get("einheit", "")})
+            gesehen.add((kz.get("gruppe"), kz["name"]))
+    if out:
+        return out
     for x in d.get("kennzahlen", []):
         for ber, anfang, gruppe, name, einheit in WOCHE:
             if x.get("bereich") == ber and str(x.get("name", "")).startswith(anfang) and name not in gesehen:
