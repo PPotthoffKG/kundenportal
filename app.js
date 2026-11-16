@@ -419,8 +419,8 @@
     S.zaehler = { entscheidungen: e.count || 0, aufgaben: a.count || 0 };
     return S.zaehler;
   }
-  const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz", listingcheck: "Listing-Check" };
-  const werteName = (r) => (r.art === "listingcheck" ? "Alle Artikel" : "Alle Werte");
+  const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz", listingcheck: "Listing-Check", konzept: "Konzept" };
+  const werteName = (r) => (r.art === "listingcheck" ? "Alle Artikel" : r.art === "konzept" ? "Entwürfe" : "Alle Werte");
   const ANLIEGEN_STATUS = { offen: "Angekommen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
   const ANTWORT = { ja: "Ja", nein: "Nein", intern: "Kläre ich intern" };
   function zeitraumText(r) {
@@ -621,7 +621,7 @@
     };
     const vergleich = (art, text) => (data || []).filter((r) => r.art === art).length > 1 ? `<p class="nach"><a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}">${text}</a></p>` : "";
     const gruppeV = (art, h, text) => { const g = gruppe(art, h); return g ? g.replace(/<\/section>$/, vergleich(art, text) + "</section>") : ""; };
-    const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen") + gruppe("listingcheck", "Listing-Checks");
+    const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen") + gruppe("listingcheck", "Listing-Checks") + gruppe("konzept", "Konzepte");
     rahmen({ titel: "Berichte", aktiv: "berichte", zaehler: z, buehne: buehneSeite({ titel: "Berichte", unter: t("Alles, was wir Ihnen geschickt haben", "Alles, was wir dir geschickt haben") }),
       inhalt: inhalt || leer("Noch kein Bericht.") });
   }
