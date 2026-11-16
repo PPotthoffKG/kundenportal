@@ -3,7 +3,8 @@
 Aufruf:
   python3 ablegen.py --kunde pascoe --art wochenstand --zeitraum "KW 45 2026" --start 2026-11-02 \
       --titel "Montagsbrief KW 45" --html seite1.html [--werte alle-werte.html] [--pdf brief.pdf] \
-      [--zusammenfassung zusammenfassung.txt] [--entscheidungen entscheidungen.json] [--ueberschreiben]
+      [--zusammenfassung zusammenfassung.txt] [--entscheidungen entscheidungen.json] [--ueberschreiben] [--kanal vendor|seller]
+--kanal nur bei Kunden mit Vendor und Seller (z. B. Grafik Werkstatt); ohne --kanal wie bisher.
 Der Ablage-Schlüssel kommt aus PORTAL_ABLAGE_SCHLUESSEL oder ablage_schluessel.local.txt neben diesem Skript.
 Sichtbar wird der Bericht erst nach Freigabe im internen Bereich des Portals.
 """
@@ -20,7 +21,7 @@ for f in ("kunde", "art", "zeitraum"):
     a.add_argument("--" + f, required=True)
 for f in ("start", "titel", "html"):
     a.add_argument("--" + f)
-for f in ("werte", "pdf", "zusammenfassung", "entscheidungen", "kennzahlen"):
+for f in ("werte", "pdf", "zusammenfassung", "entscheidungen", "kennzahlen", "kanal"):
     a.add_argument("--" + f)
 a.add_argument("--ueberschreiben", action="store_true")
 a.add_argument("--nur-kennzahlen", action="store_true", help="nur Kennzahlen an einem bestehenden Bericht nachtragen")
@@ -28,12 +29,12 @@ o = a.parse_args()
 lies = lambda p: open(p, encoding="utf-8").read() if p else None
 kz = json.load(open(o.kennzahlen)) if o.kennzahlen else None
 if o.nur_kennzahlen:
-    daten = dict(aktion="kennzahlen", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, kennzahlen=kz)
+    daten = dict(aktion="kennzahlen", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, kennzahlen=kz, kanal=o.kanal)
 else:
   daten = dict(aktion="bericht", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, zeitraum_start=o.start, titel=o.titel,
              html=lies(o.html), html_werte=lies(o.werte), zusammenfassung=(lies(o.zusammenfassung) or "").strip() or None,
              pdf_base64=base64.b64encode(open(o.pdf, "rb").read()).decode() if o.pdf else None,
-             entscheidungen=json.load(open(o.entscheidungen)) if o.entscheidungen else [], ueberschreiben=o.ueberschreiben, kennzahlen=kz)
+             entscheidungen=json.load(open(o.entscheidungen)) if o.entscheidungen else [], ueberschreiben=o.ueberschreiben, kennzahlen=kz, kanal=o.kanal)
 req = urllib.request.Request(URL, data=json.dumps(daten).encode(), method="POST",
                              headers={"Content-Type": "application/json", "x-ablage-schluessel": schluessel()})
 try:

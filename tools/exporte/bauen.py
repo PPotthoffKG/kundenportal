@@ -1,7 +1,7 @@
 """PDF, PowerPoint und Excel zu einem Bericht bauen und an den Bericht im Portal hängen (Status bleibt).
 
 Aufruf: python3 bauen.py --kunde pascoe --art wochenstand --zeitraum "KW 45" --titel "Montagsbrief KW 45" \
-          --unter "Pascoe · 02.11. bis 08.11.2026" --seite1 seite1.html [--alle alle-werte.html] [--kennzahlen kz.json] [--ohne-excel] [--nur-bauen DIR]
+          --unter "Pascoe · 02.11. bis 08.11.2026" --seite1 seite1.html [--alle alle-werte.html] [--kennzahlen kz.json] [--ohne-excel] [--nur-bauen DIR] [--kanal vendor|seller]
 """
 import argparse, base64, json, os, subprocess, sys, tempfile, urllib.request, urllib.error
 HIER = os.path.dirname(os.path.abspath(__file__))
@@ -14,7 +14,7 @@ def schluessel():
 a = argparse.ArgumentParser()
 for f in ("kunde", "art", "zeitraum", "titel", "unter", "seite1"):
     a.add_argument("--" + f, required=True)
-a.add_argument("--alle"); a.add_argument("--kennzahlen"); a.add_argument("--ohne-excel", action="store_true"); a.add_argument("--nur-bauen")
+a.add_argument("--alle"); a.add_argument("--kennzahlen"); a.add_argument("--kanal"); a.add_argument("--ohne-excel", action="store_true"); a.add_argument("--nur-bauen")
 o = a.parse_args()
 d = o.nur_bauen or tempfile.mkdtemp()
 os.makedirs(d, exist_ok=True)
@@ -32,7 +32,7 @@ if not o.ohne_excel:
 if o.nur_bauen:
     print("gebaut in", d); sys.exit(0)
 b64 = lambda p: base64.b64encode(open(p, "rb").read()).decode() if os.path.exists(p) else None
-daten = dict(aktion="exporte", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, pdf_base64=b64(pdf), pptx_base64=b64(pptx),
+daten = dict(aktion="exporte", kunde_slug=o.kunde, art=o.art, zeitraum=o.zeitraum, kanal=o.kanal, pdf_base64=b64(pdf), pptx_base64=b64(pptx),
              xlsx_base64=None if o.ohne_excel else b64(xlsx))
 req = urllib.request.Request(URL, data=json.dumps(daten).encode(), method="POST", headers={"Content-Type": "application/json", "x-ablage-schluessel": schluessel()})
 try:
