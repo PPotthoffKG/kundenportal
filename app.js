@@ -419,7 +419,8 @@
     S.zaehler = { entscheidungen: e.count || 0, aufgaben: a.count || 0 };
     return S.zaehler;
   }
-  const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz" };
+  const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz", listingcheck: "Listing-Check" };
+  const werteName = (r) => (r.art === "listingcheck" ? "Alle Artikel" : "Alle Werte");
   const ANLIEGEN_STATUS = { offen: "Angekommen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
   const ANTWORT = { ja: "Ja", nein: "Nein", intern: "Kläre ich intern" };
   function zeitraumText(r) {
@@ -620,7 +621,7 @@
     };
     const vergleich = (art, text) => (data || []).filter((r) => r.art === art).length > 1 ? `<p class="nach"><a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}">${text}</a></p>` : "";
     const gruppeV = (art, h, text) => { const g = gruppe(art, h); return g ? g.replace(/<\/section>$/, vergleich(art, text) + "</section>") : ""; };
-    const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen");
+    const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen") + gruppe("listingcheck", "Listing-Checks");
     rahmen({ titel: "Berichte", aktiv: "berichte", zaehler: z, buehne: buehneSeite({ titel: "Berichte", unter: t("Alles, was wir Ihnen geschickt haben", "Alles, was wir dir geschickt haben") }),
       inhalt: inhalt || leer("Noch kein Bericht.") });
   }
@@ -695,11 +696,11 @@
     if (!intern) alsGesehen(r.id);
     const basis = intern ? "intern/vorschau" : "berichte";
     const pfad = werte && r.werte_pfad ? r.werte_pfad : r.html_pfad;
-    const titel = werte ? `Alle Werte ${r.zeitraum}` : berichtTitel(r);
+    const titel = werte ? `${werteName(r)} ${r.zeitraum}` : berichtTitel(r);
     const zurueck = werte ? [`${basis}/${r.id}`, `Zurück zum ${ART[r.art] || "Bericht"}`] : [zurueckPfad, "Alle Berichte"];
-    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">Alle Werte</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(berichtTitel(r))}.pdf">PDF laden</button>` : ""}${r.pptx_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pptx_pfad)}" data-name="${esc(berichtTitel(r))}.pptx">PowerPoint laden</button>` : ""}${r.xlsx_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.xlsx_pfad)}" data-name="${esc(berichtTitel(r))}.xlsx">Excel laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
+    const knoepfe = `<div class="knopfzeile kein-druck">${!werte && S.g3 && r.werte_pfad ? `<a class="btn zwei" href="#/${basis}/${r.id}/werte">${werteName(r)}</a>` : ""}${r.pdf_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pdf_pfad)}" data-name="${esc(berichtTitel(r))}.pdf">PDF laden</button>` : ""}${r.pptx_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.pptx_pfad)}" data-name="${esc(berichtTitel(r))}.pptx">PowerPoint laden</button>` : ""}${r.xlsx_pfad ? `<button class="btn zwei" type="button" data-pdf="${esc(r.xlsx_pfad)}" data-name="${esc(berichtTitel(r))}.xlsx">Excel laden</button>` : ""}${intern && r.status !== "freigegeben" ? `<button class="btn" type="button" data-frei="${r.id}">Für ${esc(S.internKunde?.name || "den Kunden")} freigeben</button>` : ""}</div>`;
     const komm = !intern && !werte ? await kommentarBlock({ art: "bericht", id: r.id, kundeId: r.kunde_id }) : "";
-    rahmen({ titel: werte ? "Alle Werte" : ART[r.art] || "Bericht", aktiv: zurueckPfad, reiter, zaehler: z,
+    rahmen({ titel: werte ? werteName(r) : ART[r.art] || "Bericht", aktiv: zurueckPfad, reiter, zaehler: z,
       buehne: buehneSeite({ zurueck, kennung: `${esc(ART[r.art] || "Bericht")} · ${esc(zeitraumText(r))}${intern ? ` · ${esc(r.status)}` : ""}`, titel }),
       inhalt: `<div class="papier rahmen"><div class="laedt" id="ber-laedt" style="padding:24px"><p class="wort" role="status">${sym("schedule")}${esc(ART[r.art] || "Bericht")} wird geladen</p><div class="linie"></div></div><iframe id="ber" title="${esc(titel)}" sandbox="allow-same-origin" tabindex="-1" hidden></iframe></div>${knoepfe}${komm}` });
     pdfKnoepfe();

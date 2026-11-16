@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
   }
 
   // Art und Datum gehen in den Speicherpfad: nur feste Werte zulassen
-  if (!["wochenstand", "monatsauswertung", "terminnotiz"].includes(e.art)) return antwort(400, { fehler: "Art unbekannt" });
+  if (!["wochenstand", "monatsauswertung", "terminnotiz", "listingcheck"].includes(e.art)) return antwort(400, { fehler: "Art unbekannt" });
   if (typeof e.zeitraum_start !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.zeitraum_start)) {
     return antwort(400, { fehler: "zeitraum_start muss JJJJ-MM-TT sein" });
   }
