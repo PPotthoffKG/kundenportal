@@ -81,8 +81,12 @@ Deno.serve(async (req) => {
 
   // Ein Bericht belegt seinen Pfad über Art und Startdatum. Gibt es dort schon einen Bericht
   // mit anderem Zeitraum-Text, wird nichts überschrieben.
-  const { data: alle, error: fa } = await db.from("berichte").select("id,status,zeitraum")
-    .eq("kunde_id", kunde.id).eq("art", e.art).or(`zeitraum.eq.${JSON.stringify(e.zeitraum)},zeitraum_start.eq.${e.zeitraum_start}`);
+  // Konzepte: mehrere am selben Tag möglich; der Pfad bekommt eine Kennung aus dem Zeitraum-Text.
+  const mehrere = e.art === "konzept";
+  const kennung = mehrere ? "-" + String(e.zeitraum).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 60) : "";
+  let suche = db.from("berichte").select("id,status,zeitraum").eq("kunde_id", kunde.id).eq("art", e.art);
+  suche = mehrere ? suche.eq("zeitraum", e.zeitraum) : suche.or(`zeitraum.eq.${JSON.stringify(e.zeitraum)},zeitraum_start.eq.${e.zeitraum_start}`);
+  const { data: alle, error: fa } = await suche;
   if (fa) return antwort(500, { fehler: "Bericht suchen: " + fa.message });
   if ((alle ?? []).some((b) => b.zeitraum !== e.zeitraum)) {
     return antwort(409, { fehler: "Zu diesem Startdatum gibt es schon einen Bericht mit anderem Zeitraum" });
@@ -97,7 +101,7 @@ Deno.serve(async (req) => {
     if (fz) return antwort(500, { fehler: "Bericht zurücknehmen: " + fz.message });
   }
 
-  const basis = `${kunde.id}/${e.art}/${e.zeitraum_start}`;
+  const basis = `${kunde.id}/${e.art}/${e.zeitraum_start}${kennung}`;
   const html = new TextEncoder().encode(e.html);
   const up1 = await db.storage.from("berichte").upload(`${basis}.html`, html, { contentType: "text/html; charset=utf-8", upsert: true });
   if (up1.error) return antwort(500, { fehler: "HTML-Ablage: " + up1.error.message });

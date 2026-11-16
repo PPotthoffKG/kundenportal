@@ -420,7 +420,7 @@
     return S.zaehler;
   }
   const ART = { wochenstand: "Montagsbrief", monatsauswertung: "Monatsauswertung", terminnotiz: "Terminnotiz", listingcheck: "Listing-Check", konzept: "Konzept" };
-  const werteName = (r) => (r.art === "listingcheck" ? "Alle Artikel" : r.art === "konzept" ? "In voller Länge" : "Alle Werte");
+  const werteName = (r) => (r.art === "listingcheck" ? "Alle Artikel" : "Alle Werte");
   const ANLIEGEN_STATUS = { offen: "Angekommen", in_arbeit: "In Arbeit", erledigt: "Erledigt" };
   const ANTWORT = { ja: "Ja", nein: "Nein", intern: "Kläre ich intern" };
   function zeitraumText(r) {
