@@ -268,9 +268,15 @@ def tab_artikel():
     a = D.get("artikel_top") or []
     if not a:
         return ""
+    # Ohne Besuche und Buy Box (z. B. Vendor) fallen diese Spalten weg; sonst wie bisher.
+    mit_besuch = any(x.get("sitzungen", x.get("besuche")) is not None or x.get("buybox") is not None for x in a)
+    titel_t = D.get("artikel_titel") or "Top 10 Artikel nach Umsatz"
+    if not mit_besuch:
+        z = [{"zellen": [artikel(x), eur(x.get("umsatz")), ganz(x.get("einheiten"))]} for x in a]
+        return tabelle(titel_t, [("Artikel", ""), ("Umsatz", "r"), (EW, "r")], z, D.get("artikel_note") or "")
     z = [{"zellen": [artikel(x), eur(x.get("umsatz")), ganz(x.get("einheiten")), ganz(x.get("sitzungen", x.get("besuche"))),
                      pct(x.get("buybox"))]} for x in a]
-    return tabelle("Top 10 Artikel nach Umsatz", [("Artikel", ""), ("Umsatz", "r"), (EW, "r"), ("Besuche", "r"), ("Buy Box", "r")], z,
+    return tabelle(titel_t, [("Artikel", ""), ("Umsatz", "r"), (EW, "r"), ("Besuche", "r"), ("Buy Box", "r")], z,
                    "Buy Box: Anteil der Besuche, in denen euer Angebot vorne stand.")
 
 
@@ -315,6 +321,18 @@ def tab_suche():
 def liste(titel, xs):
     xs = [x for x in (txt(x) for x in xs) if x]
     return f'<h3>{titel}</h3><ul class="punkte">{"".join(f"<li>{e(x)}</li>" for x in xs)}</ul>' if xs else ""
+
+
+def tab_frei(b):
+    out = ""
+    for t in D.get("tabellen") or []:
+        if t.get("bereich") != b:
+            continue
+        kopf = [(h, c) for h, c in t.get("kopf", [])]
+        zeilen = [{"zellen": [e(txt(v)) if not isinstance(v, (int, float)) else (eur(v) if kopf[i][1] == "r€" else ganz(v)) for i, v in enumerate(z)]} for z in t.get("zeilen", [])]
+        kopf = [(h, "r" if c.startswith("r") else c) for h, c in kopf]
+        out += tabelle(txt(t.get("titel", "")), kopf, zeilen, txt(t.get("note", "")))
+    return out
 
 
 ZUSATZ = {"Verkauf": [tab_artikel, bewegung], "Lager": [tab_reichweite], "Marke": [tab_suche]}
@@ -437,7 +455,7 @@ def alle_werte():
     hb = D.get("hinweise_bereich") or {}
     for b in alle_b:
         ks = GRUPPEN[b]
-        zus = "".join(f() for f in ZUSATZ.get(b, []))
+        zus = "".join(f() for f in ZUSATZ.get(b, [])) + tab_frei(b)
         auf = liste("Aufgefallen", hb.get(b) or [])
         if b == "Fristen":
             auf += liste("Hinweise von Amazon", D.get("hinweise") or [])
