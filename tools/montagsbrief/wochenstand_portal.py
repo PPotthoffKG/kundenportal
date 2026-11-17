@@ -22,6 +22,7 @@ Optionale Felder in den Daten:
   einheit: "Stück"                         -> Wort für Einheiten (Standard „Packungen“, z. B. Kalender und Tassen: „Stück“)
   quelle: "…"                              -> eigener Quellsatz unter dem Bericht (z. B. Vendor Central)
   bereich_titel: {Bereich: Titel}          -> Überschriften für eigene Bereiche (z. B. „Lieferfähigkeit“)
+  ohne_ampel: true                         -> keine Ampel je Bereich (Arbeitsbericht ohne Kennzahlen)
 """
 import os, re, sys, json, html
 
@@ -155,6 +156,8 @@ def ampel(a, wort_=None):
 
 
 def bereich_ampel(b):
+    if D.get("ohne_ampel") is True:  # Arbeitsbericht ohne Kennzahlen (z. B. La Mer): keine Ampel je Bereich
+        return ""
     return ampel("", "ruht") if (b == "Werbung" and RUHT) else ampel(stufe(b))
 
 
@@ -468,7 +471,8 @@ def alle_werte():
         teil += ("<h2>Was diese Woche fehlt</h2><ul class=\"punkte\">"
                  + "".join(f'<li><b>{e(txt(x.get("was")))}</b>: {e(txt(x.get("warum")))}</li>' for x in l) + "</ul>")
     teil += quelle()
-    teil += '<p class="quelle">Wo Amazon keinen Grenzwert nennt, ist die Schwelle der Ampel unser Vorschlag.</p>'
+    if not D.get("ohne_ampel"):
+        teil += '<p class="quelle">Wo Amazon keinen Grenzwert nennt, ist die Schwelle der Ampel unser Vorschlag.</p>'
     teil += druckkopf(" · Alle Werte")
     return seite(f'Alle Werte {W.get("kw", "")} · {KUNDE}', teil)
 
