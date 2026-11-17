@@ -436,6 +436,32 @@
     return r.zeitraum || "";
   }
   const berichtTitel = (r) => `${ART[r.art] || "Bericht"} ${kanalWort(r)}${r.zeitraum}`;
+  // Berichte nach Monaten ordnen. Eine Woche gehört zu dem Monat, in dem ihr Donnerstag liegt (wie die Kalenderwoche).
+  const MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  function monatVon(r) {
+    if (!r.zeitraum_start) return "";
+    const d = new Date(r.zeitraum_start + "T12:00:00");
+    if (r.art === "wochenstand") d.setDate(d.getDate() + 3);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  const monatText = (m) => (m ? `${MONATE[+m.slice(5) - 1]} ${m.slice(0, 4)}` : "Ohne Zeitraum");
+  const ART_RANG = { monatsauswertung: 0, wochenstand: 1, terminnotiz: 2, listingcheck: 3, konzept: 4 };
+  function nachMonaten(liste) {
+    const map = new Map();
+    for (const r of liste) { const m = monatVon(r); if (!map.has(m)) map.set(m, []); map.get(m).push(r); }
+    const sortiert = [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
+    for (const [, l] of sortiert) l.sort((a, b) => (ART_RANG[a.art] ?? 9) - (ART_RANG[b.art] ?? 9) || (a.zeitraum_start < b.zeitraum_start ? 1 : a.zeitraum_start > b.zeitraum_start ? -1 : 0) || (a.kanal === b.kanal ? 0 : a.kanal === "vendor" ? -1 : 1));
+    return sortiert;
+  }
+  // Die jüngsten Monate stehen offen da, ältere Jahre sind eingeklappt.
+  function monatsBloecke(liste, block, offen = 3) {
+    const monate = nachMonaten(liste);
+    const vorn = monate.slice(0, offen).map(([m, l]) => block(monatText(m), l)).join("");
+    const jahre = new Map();
+    for (const [m, l] of monate.slice(offen)) { const j = m.slice(0, 4) || "Ohne Zeitraum"; if (!jahre.has(j)) jahre.set(j, []); jahre.get(j).push([m, l]); }
+    const rest = [...jahre.entries()].map(([j, ms]) => `<details class="jahr"><summary class="aufklapp">${esc(j)} · ${ms.reduce((n, [, l]) => n + l.length, 0)} Berichte</summary>${ms.map(([m, l]) => block(monatText(m), l)).join("")}</details>`).join("");
+    return vorn + rest;
+  }
   function montagDieserWoche() { const d = new Date(); const tag = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - tag); return d; }
   function kw(d) { const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); const n = x.getUTCDay() || 7; x.setUTCDate(x.getUTCDate() + 4 - n); const j = new Date(Date.UTC(x.getUTCFullYear(), 0, 1)); return Math.ceil(((x - j) / 864e5 + 1) / 7); }
   const sortFrist = (p, q) => { const a = fristParse(p.frist), b = fristParse(q.frist); return a && b ? a - b : a ? -1 : b ? 1 : 0; };
@@ -626,17 +652,10 @@
     const [z, { data }] = await Promise.all([zaehlerKunde(), kq("berichte").select("id,art,kanal,titel,zeitraum,zeitraum_start,freigegeben_am").order("zeitraum_start", { ascending: false })]);
     // kanal: undefined = alle Berichte dieser Art (Kunden mit einem Kanal), sonst nur dieser Kanal
     const von = (art, kanal) => (data || []).filter((r) => r.art === art && (kanal === undefined || (r.kanal || null) === kanal));
-    const gruppe = (art, h, kanal) => {
-      const liste = von(art, kanal);
-      return liste.length ? `<section class="block"><h2>${h}</h2><ul class="register ohne-art">${liste.map((r) => zeile({ href: `#/berichte/${r.id}`, titel: zeitraumText(r), tun: "Lesen", mitArt: false })).join("")}</ul></section>` : "";
-    };
-    const vergleich = (art, text, kanal) => von(art, kanal).length > 1 ? `<p class="nach"><a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}${kanal ? "." + kanal : ""}">${text}</a></p>` : "";
-    const gruppeV = (art, h, text) => {
-      const kanaele = [...new Set(von(art).map((r) => r.kanal || null))];
-      const teile = kanaele.length && kanaele.some((k) => k) ? Object.keys(KANAL).filter((k) => kanaele.includes(k)).map((k) => [k, `${h} ${KANAL[k]}`]) : [[undefined, h]];
-      return teile.map(([k, ueb]) => { const g = gruppe(art, ueb, k); return g ? g.replace(/<\/section>$/, vergleich(art, text, k) + "</section>") : ""; }).join("");
-    };
-    const inhalt = gruppeV("wochenstand", "Montagsbriefe", "Wochen vergleichen") + gruppeV("monatsauswertung", "Monatsauswertungen", "Monate vergleichen") + gruppe("terminnotiz", "Terminnotizen") + gruppe("listingcheck", "Listing-Checks") + gruppe("konzept", "Konzepte");
+    const vgl = (art, text) => { const ks = [...new Set(von(art).map((r) => r.kanal || null))]; return ks.map((k) => (von(art, ks.some((x) => x) ? k : undefined).length > 1 ? `<a class="textlink" href="#/vergleich/${art === "wochenstand" ? "woche" : "monat"}${k ? "." + k : ""}">${text}${k ? " " + KANAL[k] : ""}</a>` : "")).filter(Boolean); };
+    const links = [...vgl("wochenstand", "Wochen vergleichen"), ...vgl("monatsauswertung", "Monate vergleichen")];
+    const block = (h, l) => `<section class="block"><h2>${esc(h)}</h2><ul class="register">${l.map((r) => zeile({ href: `#/berichte/${r.id}`, art: esc((ART[r.art] || "Bericht") + (KANAL[r.kanal] ? " " + KANAL[r.kanal] : "")), titel: zeitraumText(r), tun: "Lesen" })).join("")}</ul></section>`;
+    const inhalt = (data || []).length ? (links.length ? `<p class="nach vergleiche">${links.join(" · ")}</p>` : "") + monatsBloecke(data, block) : "";
     rahmen({ titel: "Berichte", aktiv: "berichte", zaehler: z, buehne: buehneSeite({ titel: "Berichte", unter: t("Alles, was wir Ihnen geschickt haben", "Alles, was wir dir geschickt haben") }),
       inhalt: inhalt || leer("Noch kein Bericht.") });
   }
@@ -1040,7 +1059,7 @@
     const [z, { data }] = await Promise.all([zaehlerIntern(), sb.from("berichte").select("*").eq("kunde_id", k.id).order("zeitraum_start", { ascending: false }).order("art")]);
     rahmenAlt(`<div class="label kicker">Interner Bereich</div><h1>Berichte freigeben · ${esc(k.name)}</h1><p class="lead">Neue Berichte kommen als Entwurf. Der Kunde sieht sie erst nach der Freigabe; die Entscheidungen des Berichts werden dann mit geöffnet.</p>
       <div class="leiste" style="margin-top:32px">${kundenwahl()}<button class="btn zwei" type="button" id="als-kunde">Kundensicht von ${esc(k.name)} ansehen</button></div>
-      ${data?.length ? `<ul class="liste">${data.map((r) => berichtZeile(r, true)).join("")}</ul>` : `<div class="leer">Für ${esc(k.name)} liegt noch kein Bericht.</div>`}`,
+      ${data?.length ? monatsBloecke(data, (h, l) => `<section class="abschnitt"><div class="abschnitt-kopf"><h2>${esc(h)}</h2></div><ul class="liste">${l.map((r) => berichtZeile(r, true)).join("")}</ul></section>`, 2) : `<div class="leer">Für ${esc(k.name)} liegt noch kein Bericht.</div>`}`,
       INTERN_REITER, "intern", z);
     kundenwahlVerdrahten(internBerichte); pdfKnoepfe(); freigabeKnoepfe();
     document.getElementById("als-kunde").onclick = kundensichtStarten;
