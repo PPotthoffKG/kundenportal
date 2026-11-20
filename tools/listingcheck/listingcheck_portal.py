@@ -14,6 +14,8 @@ Daten (JSON):
   reihenfolge: [Sätze]
   aktiv, nicht_aktiv: [{asin, name, status?, texte, bilder, aplus, suchbegriffe, potenzial, vorschlag}]
      texte/bilder/aplus/suchbegriffe: gut | ausbaufaehig | fehlt
+     verkauft_von (optional): wer den Artikel gerade auf amazon.de verkauft (Verkäufer im Kaufbereich)
+  optional: quelle, aktiv_titel, aktiv_note, nicht_aktiv_note, potenzial_hinweis (eigene Sätze, z. B. bei Marken ohne eigenen Verkauf)
 
 Wie beim Montagsbrief: ohne JavaScript, Rahmen und Titel stellt das Portal, CSS eingebettet
 (Abschrift aus montagsbrief/wochenstand_portal.py).
@@ -60,6 +62,8 @@ def stufe(s):
 
 
 def quelle():
+    if D.get("quelle"):
+        return f'<p class="quelle">{e(D["quelle"])}</p>'
     return (f'<p class="quelle">Quelle: Seller Central {e(D.get("marktplatz", "DE"))}, Konto {e(KONTO)}, und die Produktseiten auf amazon.de, '
             f'abgerufen am {e(dat(D.get("stand", "")))}. Suchbegriffe: die im Hintergrund hinterlegten Begriffe der eigenen Angebote. '
             f'Im Konto wurde dafür nichts geändert.</p>')
@@ -90,12 +94,13 @@ def seite1():
 
 
 def tabelle(titel, zeilen, mit_status=False, note=""):
-    kopf = [("Artikel", "")] + ([("Status", "")] if mit_status else []) + [
+    mit_vk = any(z.get("verkauft_von") for z in zeilen)
+    kopf = [("Artikel", "")] + ([("Verkauft von", "")] if mit_vk else []) + ([("Status", "")] if mit_status else []) + [
         ("Texte", ""), ("Bilder", ""), ("A+", ""), ("Suchbegriffe", ""), ("Potenzial", ""), ("Was wir vorschlagen", "vor")]
     th = "".join(f'<th class="{c}" scope="col">{e(h)}</th>' for h, c in kopf)
     body = ""
     for z in zeilen:
-        zellen = [f'{e(z["name"])}<span class="asin">{e(z["asin"])}</span>'] + ([e(z.get("status", ""))] if mit_status else []) + [
+        zellen = [f'{e(z["name"])}<span class="asin">{e(z["asin"])}</span>'] + ([e(z.get("verkauft_von") or "")] if mit_vk else []) + ([e(z.get("status", ""))] if mit_status else []) + [
             stufe(z["texte"]), stufe(z["bilder"]), stufe(z["aplus"]), stufe(z["suchbegriffe"]),
             f'<span class="pot {e(z["potenzial"])}">{e(z["potenzial"])}</span>', e(z["vorschlag"])]
         body += "<tr>" + "".join(f'<td class="{c}" data-k="{e(h)}">{v}</td>' for (h, c), v in zip(kopf, zellen)) + "</tr>"
@@ -105,12 +110,13 @@ def tabelle(titel, zeilen, mit_status=False, note=""):
 
 def alle_artikel():
     leg = ('<div class="legende"><span class="stufe gut">passt</span><span class="stufe ausbaufaehig">ausbaufähig</span>'
-           '<span class="stufe fehlt">fehlt</span><span>Potenzial: wie viel eine Überarbeitung bringen kann, gemessen an Umsatz und Zustand</span></div>')
+           '<span class="stufe fehlt">fehlt</span><span>Potenzial: ' + e(D.get("potenzial_hinweis") or "wie viel eine Überarbeitung bringen kann, gemessen an Umsatz und Zustand") + '</span></div>')
     t = leg
-    t += tabelle(f'Aktive Artikel ({len(D.get("aktiv") or [])})', D.get("aktiv") or [], note="Sortiert nach Umsatz, der umsatzstärkste Artikel zuerst.")
+    t += tabelle(f'{D.get("aktiv_titel") or "Aktive Artikel"} ({len(D.get("aktiv") or [])})', D.get("aktiv") or [],
+                 note=D.get("aktiv_note") or "Sortiert nach Umsatz, der umsatzstärkste Artikel zuerst.")
     if D.get("nicht_aktiv"):
         t += tabelle(f'Zurzeit nicht verkaufbar ({len(D["nicht_aktiv"])})', D["nicht_aktiv"], mit_status=True,
-                     note="Nicht vorrätig oder inaktiv in Seller Central. Artikel mit Ware im Lager oder auf dem Weg zuerst.")
+                     note=D.get("nicht_aktiv_note") or "Nicht vorrätig oder inaktiv in Seller Central. Artikel mit Ware im Lager oder auf dem Weg zuerst.")
     t += quelle()
     t += ('<p class="quelle">Texte: Titel, Bullet Points und Beschreibung. Bilder: ab 7 passt, 4–6 ausbaufähig, bis 3 fehlt. '
           'Suchbegriffe: fehlen, enthalten fremde Markennamen (fehlt) oder sind länger als die 250 Byte, die Amazon auswertet (ausbaufähig).</p>')
